@@ -1,0 +1,102 @@
+model_name: fasttext
+
+datasets:
+  sst2:
+    hf_path: stanfordnlp/sst2
+    text_col: sentence
+    label_col: label
+    class_names: [negative, positive]
+    train_split: train
+    test_split: validation  # test split has no labels in GLUE
+    train_size: 10000
+    val_size: 2000
+
+  imdb:
+    hf_path: stanfordnlp/imdb
+    text_col: text
+    label_col: label
+    class_names: [negative, positive]
+    train_split: train
+    test_split: test
+    train_size: 10000
+    val_size: 2000
+
+  amazon:
+    hf_path: cogsci13/Amazon-Reviews-2023-Books-Review
+    text_col: text
+    title_col: title
+    label_col: rating
+    label_offset: -1
+    class_names: ["1star", "2stars", "3stars", "4stars", "5stars"]
+    train_split: full
+    streaming: true
+    train_size: 10000
+    val_size: 2000
+    test_size: 2000
+    categorical_cols:
+      verified_purchase: 2
+
+  ag_news:
+    hf_path: fancyzhx/ag_news
+    text_col: text
+    label_col: label
+    class_names: [World, Sports, Business, Sci/Tech]
+    train_split: train
+    test_split: test
+    train_size: 10000
+    val_size: 2000
+
+  20newsgroups:
+    hf_path: SetFit/20_newsgroups
+    text_col: text
+    label_col: label
+    class_names: [alt.atheism, comp.graphics, comp.os.ms-windows.misc, comp.sys.ibm.pc.hardware,
+                  comp.sys.mac.hardware, comp.windows.x, misc.forsale, rec.autos, rec.motorcycles,
+                  rec.sport.baseball, rec.sport.hockey, sci.crypt, sci.electronics, sci.med,
+                  sci.space, soc.religion.christian, talk.politics.guns, talk.politics.mideast,
+                  talk.politics.misc, talk.religion.misc]
+    train_split: train
+    test_split: test
+    train_size: 10000
+    val_size: 2000
+
+
+  subj:
+    hf_path: SetFit/subj
+    text_col: text
+    label_col: label
+    class_names: [objective, subjective]
+    train_split: train
+    test_split: test
+    train_size: 10000
+    val_size: 2000
+
+  clinc150:
+    hf_path: DeepPavlov/clinc150
+    text_col: utterance
+    label_col: label
+    train_split: train
+    test_split: test
+    train_size: 10000
+    val_size: 2000
+
+tokenizer:
+  type: ngram
+  min_count: 1
+  min_n: 3
+  max_n: 6
+  num_tokens: 100000
+  len_word_ngrams: 1
+
+model:
+  embedding_dim: 128
+  aggregation_method: mean
+
+training:
+  num_epochs: 10
+  batch_size: 64
+  lr: 0.001
+  patience_early_stopping: 3
+  num_workers: 0
+
+seed: 42
