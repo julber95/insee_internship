@@ -1,4 +1,4 @@
-model_name: fasttext
+model_name: fasttext_transformer
 
 datasets:
   sst2:
@@ -63,7 +63,6 @@ datasets:
     val_size: 2000
     test_size: 2000
 
-
   subj:
     hf_path: SetFit/subj
     text_col: text
@@ -97,6 +96,12 @@ tokenizer:
 model:
   embedding_dim: 128
   aggregation_method: mean
+  attention_config:
+    n_layers: 2
+    n_head: 4
+    n_kv_head: 4
+    positional_encoding: true
+    sequence_len: 256
 
 training:
   num_epochs: 10

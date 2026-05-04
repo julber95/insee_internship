@@ -12,18 +12,19 @@ from run import run
 
 CONFIGS_DIR = Path(__file__).parent / "configs"
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("config", help="Chemin vers le fichier YAML du modèle")
+    parser.add_argument("config", help="Path to the model YAML config file")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
     datasets = list(cfg["datasets"].keys())
-    print(f"Datasets : {datasets}")
+    print(f"Datasets: {datasets}")
 
     for dataset_name in datasets:
         run(args.config, dataset_name)
 
-    print("\nTous les benchmarks sont terminés.")
+    print("\nAll benchmarks completed.")

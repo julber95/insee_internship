@@ -3,6 +3,19 @@
 venv/
 env/
 
+# PyTorch Lightning
+lightning_logs/
+checkpoints/
+
+# Benchmark artifacts
+benchmark/results/models/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# HuggingFace cache
+~/.cache/huggingface/
+
 # Python
 __pycache__/
 *.py[cod]
