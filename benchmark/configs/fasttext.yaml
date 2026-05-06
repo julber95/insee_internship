@@ -83,7 +83,7 @@ tokenizer:
   len_word_ngrams: 1
 
 model:
-  embedding_dim: 128
+  embedding_dim: 64
   aggregation_method: mean
 
 training:

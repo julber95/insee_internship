@@ -1,7 +1,7 @@
 """
 How to use:
 
-    python run.py configs/<config_name.yaml> --dataset <dataset_name>
+    uv run.py configs/<config_name.yaml> --dataset <dataset_name>
 
 Arguments:
     config          Path to a YAML model config file (e.g. configs/fasttext.yaml)
@@ -15,20 +15,23 @@ Results are saved as JSON files under benchmark/results/<model_name>/.
 """
 
 import argparse
-import json
 import logging
+import os
 import time
 
 import warnings
-from datetime import datetime
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import mlflow
+from pytorch_lightning.loggers import MLFlowLogger
 
 import torch
 
 import numpy as np
 import yaml
 from datasets import load_dataset
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.preprocessing import LabelEncoder as SKLabelEncoder
 
 from torchTextClassifiers import ModelConfig, TrainingConfig, torchTextClassifiers
@@ -143,17 +146,6 @@ def build_tokenizer(tok_cfg: dict, X_train: np.ndarray):
     return tokenizer
 
 
-# ── Save Results ──────────────────────────────────────────────────────────────
-
-def save_results(model_name: str, dataset_name: str, metrics: dict):
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    json_dir = RESULTS_DIR / model_name
-    json_dir.mkdir(parents=True, exist_ok=True)
-    json_path = json_dir / f"{dataset_name}_{ts}.json"
-    with open(json_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Saved → {json_path}")
-
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
@@ -176,12 +168,16 @@ def run(config_path: str, dataset_name: str):
     print(f"Model : {model_name} | Dataset : {dataset_name}")
     print(f"{'='*50}")
 
+    #MLflow setup
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment(model_name)
+
     X_train, y_train, X_val, y_val, X_test, y_test, value_encoder = load_data(dataset_cfg, seed)
     num_classes = len(np.unique(y_train))
 
     tokenizer = build_tokenizer(cfg["tokenizer"], X_train)
-
-    cat_cols_cfg = dataset_cfg.get("categorical_cols", {})
 
     m = cfg["model"]
     model_config = ModelConfig(
@@ -207,49 +203,74 @@ def run(config_path: str, dataset_name: str):
         save_path=str(RESULTS_DIR / "models" / model_name / dataset_name),
     )
 
-    t0 = time.time()
-    clf.train(X_train, y_train, training_config=training_config, X_val=X_val, y_val=y_val)
-    train_time = round(time.time() - t0, 1)
+    with mlflow.start_run(run_name=f"{model_name}__{dataset_name}"):
+        vocab_size = getattr(tokenizer, "vocab_size", getattr(tokenizer, "num_tokens", None))
+        mlflow.log_params({
+            "dataset": dataset_name,
+            "tokenizer": cfg["tokenizer"]["type"],
+            "emb_dim": m["embedding_dim"],
+            "agg": m.get("aggregation_method", "mean"),
+            "epochs": t["num_epochs"],
+            "batch_size": t["batch_size"],
+            "lr": t["lr"],
+            "n_classes": num_classes,
+            "vocab_size": vocab_size,
+            "n_train": len(X_train),
+            "n_val": dataset_cfg["val_size"],
+            "n_test": len(X_test),
+        })
 
-    # Predict in batches to avoid OOM (predicting all test examples at once can exceed GPU memory).
-    # predict_batch_size can be reduced per dataset in the config (e.g. for long texts like 20newsgroups).
-    predict_batch_size = dataset_cfg.get("predict_batch_size", 512)
-    all_preds = []
-    for i in range(0, len(X_test), predict_batch_size):
-        batch = X_test[i:i + predict_batch_size]
-        result = clf.predict(batch, raw_categorical_inputs=value_encoder is not None)
-        pred = result["prediction"]
-        pred = pred.squeeze(dim=-1).numpy() if isinstance(pred, torch.Tensor) else np.array(pred).squeeze(axis=-1)
-        all_preds.append(pred)
-    preds = np.concatenate(all_preds)
+        mlf_logger = MLFlowLogger(
+            experiment_name=model_name,
+            tracking_uri=tracking_uri or "mlruns",
+            run_id=mlflow.active_run().info.run_id,
+        )
+        # Log once per epoch to avoid per-step HTTP calls to the MLflow server
+        n_steps_per_epoch = len(X_train) // t["batch_size"]
+        training_config.trainer_params = {"logger": mlf_logger, "log_every_n_steps": n_steps_per_epoch}
 
-    metrics = {
-        "model_name": model_name,
-        "dataset_name": dataset_name,
-        "tokenizer": cfg["tokenizer"]["type"],
-        "embedding_dim": m["embedding_dim"],
-        "aggregation_method": m.get("aggregation_method", "mean"),
-        "attention_config": m.get("attention_config"),
-        "categorical_cols": list(cat_cols_cfg.keys()) if cat_cols_cfg else [],
-        "train_size": len(X_train),
-        "test_size": len(X_test),
-        "test_accuracy": round(accuracy_score(y_test, preds), 4),
-        "test_f1_macro": round(f1_score(y_test, preds, average="macro"), 4),
-        "train_time_s": train_time,
-        "timestamp": datetime.now().isoformat(),
-        "classification_report": classification_report(
-            y_test, preds,
-            target_names=dataset_cfg.get("class_names"),
-            output_dict=True,
-        ),
-    }
+        t0 = time.time()
+        clf.train(X_train, y_train, training_config=training_config, X_val=X_val, y_val=y_val)
+        train_time = round(time.time() - t0, 1)
 
-    print(f"Test Accuracy : {metrics['test_accuracy']:.4f}")
-    print(f"Test F1 macro : {metrics['test_f1_macro']:.4f}")
-    print(f"Train time    : {train_time}s")
+        num_params = sum(p.numel() for p in clf.lightning_module.model.parameters())
 
-    save_results(model_name, dataset_name, metrics)
-    return metrics
+        # Predict in batches to avoid OOM (predicting all test examples at once can exceed GPU memory).
+        # predict_batch_size can be reduced per dataset in the config (e.g. for long texts like 20newsgroups).
+        predict_batch_size = dataset_cfg.get("predict_batch_size", 512)
+
+        def batch_predict(X):
+            all_preds = []
+            for i in range(0, len(X), predict_batch_size):
+                batch = X[i:i + predict_batch_size]
+                result = clf.predict(batch, raw_categorical_inputs=value_encoder is not None)
+                pred = result["prediction"]
+                pred = pred.squeeze(dim=-1).numpy() if isinstance(pred, torch.Tensor) else np.array(pred).squeeze(axis=-1)
+                all_preds.append(pred)
+            return np.concatenate(all_preds)
+
+        preds = batch_predict(X_test)
+
+        test_accuracy = round(accuracy_score(y_test, preds), 4)
+        test_f1_macro = round(f1_score(y_test, preds, average="macro"), 4)
+
+        mlflow.log_metrics({
+            "test_accuracy": test_accuracy,
+            "test_f1_macro": test_f1_macro,
+            "train_time_s": train_time,
+            "num_params": num_params,
+        })
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ConfusionMatrixDisplay(confusion_matrix(y_test, preds)).plot(ax=ax)
+        mlflow.log_figure(fig, "confusion_matrix.png")
+        plt.close(fig)
+
+        print(f"Test Accuracy : {test_accuracy:.4f}")
+        print(f"Test F1 macro : {test_f1_macro:.4f}")
+        print(f"Train time    : {train_time}s")
+
+    return {"test_accuracy": test_accuracy, "test_f1_macro": test_f1_macro, "train_time_s": train_time}
 
 
 if __name__ == "__main__":
