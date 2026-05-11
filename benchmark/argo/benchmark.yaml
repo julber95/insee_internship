@@ -1,0 +1,74 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: benchmark-
+spec:
+  entrypoint: main-dag
+  templates:
+
+    - name: main-dag
+      dag:
+        tasks:
+          - name: train
+            template: trainer
+            arguments:
+              parameters:
+                - name: tokenizer
+                  value: "{{item.tokenizer}}"
+                - name: label_attn_sweep
+                  value: "{{item.label_attn_sweep}}"
+            withItems:
+              # n_layers=0 → label attention impossible, sweep sans label attn
+              - { tokenizer: "ngram",     label_attn_sweep: "null" }
+              - { tokenizer: "wordpiece", label_attn_sweep: "null" }
+              # n_layers>0 → sweep avec et sans label attn
+              - { tokenizer: "ngram",     label_attn_sweep: "null,4" }
+              - { tokenizer: "wordpiece", label_attn_sweep: "null,4" }
+
+    - name: trainer
+      inputs:
+        parameters:
+          - name: tokenizer
+          - name: label_attn_sweep
+      script:
+        image: "inseefrlab/onyxia-vscode-pytorch:py3.13.5"
+        imagePullPolicy: Always
+        command: ["/bin/bash"]
+        source: |
+          set -e
+          git clone -b main https://github.com/julber95/insee_internship.git
+          cd insee_internship
+
+          # Determine n_layers sweep based on whether label attention is used
+          if [ "{{inputs.parameters.label_attn_sweep}}" = "null" ]; then
+            LAYERS="0"
+          else
+            LAYERS="1,2"
+          fi
+
+          uv run python -m benchmark.run \
+            dataset=ag_news \
+            tokenizer={{inputs.parameters.tokenizer}} \
+            model.embedding_dim=64,128,256 \
+            model.n_layers=$LAYERS \
+            model.n_heads_label_attention={{inputs.parameters.label_attn_sweep}} \
+            training.lr=0.0001,0.001 \
+            -m
+        resources:
+          limits:
+            cpu: "4000m"
+            memory: "16Gi"
+          requests:
+            cpu: "2000m"
+            memory: "8Gi"
+        env:
+          - name: MLFLOW_TRACKING_URI
+            valueFrom: { secretKeyRef: { name: vscode-pytorch-gpu-107767-secretmlflow, key: MLFLOW_TRACKING_URI } }
+          - name: MLFLOW_TRACKING_USERNAME
+            valueFrom: { secretKeyRef: { name: vscode-pytorch-gpu-107767-secretmlflow, key: MLFLOW_TRACKING_USERNAME } }
+          - name: MLFLOW_TRACKING_PASSWORD
+            valueFrom: { secretKeyRef: { name: vscode-pytorch-gpu-107767-secretmlflow, key: MLFLOW_TRACKING_PASSWORD } }
+          - name: MLFLOW_S3_ENDPOINT_URL
+            valueFrom: { secretKeyRef: { name: vscode-pytorch-gpu-107767-secretmlflow, key: MLFLOW_S3_ENDPOINT_URL } }
+          - name: MLFLOW_HTTP_REQUEST_TIMEOUT
+            value: "1800"

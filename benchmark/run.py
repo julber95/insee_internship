@@ -168,6 +168,9 @@ def main(cfg: DictConfig):
     # 1 MLflow experiment per dataset — all hyperparameter runs for a dataset are grouped together
     mlflow.set_experiment(dataset_name)
 
+    if m.n_layers == 0 and m.n_heads_label_attention is not None:
+        raise ValueError("n_heads_label_attention requires n_layers > 0")
+
     X_train, y_train, X_val, y_val, X_test, y_test, value_encoder = load_data(dataset_cfg, cfg.seed)
     num_classes = len(np.unique(y_train))
 
