@@ -33,8 +33,8 @@ spec:
               - { tokenizer: "wordpiece", label_attn_sweep: "null,4", n_layers: "1" }
 
           # GPU pod: handles the heaviest configs (n_layers=2)
-          - name: train-gpu
-            template: trainer-gpu
+          # - name: train-gpu
+          #   template: trainer-gpu
 
     # ── CPU Trainer template ───────────────────────────────────────────────────
     - name: trainer-cpu
@@ -67,7 +67,7 @@ spec:
           requests:
             cpu: "2000m"
             memory: "16Gi"
-        env: &common-env
+        env:
           - name: MLFLOW_TRACKING_URI
             valueFrom: { secretKeyRef: { name: vscode-pytorch-gpu-107767-secretmlflow, key: MLFLOW_TRACKING_URI } }
           - name: MLFLOW_TRACKING_USERNAME
@@ -80,32 +80,32 @@ spec:
             value: "1800"
 
     # ── GPU Trainer template: n_layers=2 (heaviest configs) ───────────────────
-    - name: trainer-gpu
-      script:
-        image: "inseefrlab/onyxia-vscode-pytorch:py3.13.12-gpu"
-        imagePullPolicy: Always
-        command: ["/bin/bash"]
-        source: |
-          set -e
-          git clone -b main https://github.com/julber95/insee_internship.git
-          cd insee_internship
-
-          # n_layers=2, both tokenizers, all embedding dims, lr, label attention
-          uv run python -m benchmark.run \
-            dataset=ag_news \
-            tokenizer=ngram,wordpiece \
-            model.embedding_dim=64,128,256 \
-            model.n_layers=2 \
-            model.n_heads_label_attention=null,4 \
-            training.lr=0.0001,0.001 \
-            -m
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-            cpu: "4000m"
-            memory: "32Gi"
-          requests:
-            nvidia.com/gpu: "1"
-            cpu: "2000m"
-            memory: "16Gi"
-        env: *common-env
+    # - name: trainer-gpu
+    #   script:
+    #     image: "inseefrlab/onyxia-vscode-pytorch:py3.13.12-gpu"
+    #     imagePullPolicy: Always
+    #     command: ["/bin/bash"]
+    #     source: |
+    #       set -e
+    #       git clone -b main https://github.com/julber95/insee_internship.git
+    #       cd insee_internship
+    #
+    #       # n_layers=2, both tokenizers, all embedding dims, lr, label attention
+    #       uv run python -m benchmark.run \
+    #         dataset=ag_news \
+    #         tokenizer=ngram,wordpiece \
+    #         model.embedding_dim=64,128,256 \
+    #         model.n_layers=2 \
+    #         model.n_heads_label_attention=null,4 \
+    #         training.lr=0.0001,0.001 \
+    #         -m
+    #     resources:
+    #       limits:
+    #         nvidia.com/gpu: "1"
+    #         cpu: "4000m"
+    #         memory: "32Gi"
+    #       requests:
+    #         nvidia.com/gpu: "1"
+    #         cpu: "2000m"
+    #         memory: "16Gi"
+    #     env: *common-env

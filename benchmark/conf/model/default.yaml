@@ -5,6 +5,6 @@ n_layers: 0
 n_head: 4
 n_kv_head: 4
 positional_encoding: true
-sequence_len: 128
+sequence_len: 256
 # Label attention — null means disabled
 n_heads_label_attention: null
