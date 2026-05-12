@@ -102,7 +102,7 @@ spec:
     
           # n_layers=1,2, both tokenizers, all embedding dims, lr, label attention
           uv run python -m benchmark.run \
-            dataset=ag_news \
+            dataset=subj \
             tokenizer={{inputs.parameters.tokenizer}} \
             model.embedding_dim=64,128,256 \
             model.n_layers=1,2 \
