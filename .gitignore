@@ -32,8 +32,8 @@ datasets/
 models/
 
 # Report (generated files only — report.qmd is tracked)
-report.html
-report.pdf
-report_files/
+trying_quarto.html
+trying_quarto.pdf
+trying_quarto_files/
 /.quarto/
 **/*.quarto_ipynb
