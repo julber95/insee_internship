@@ -11,6 +11,7 @@ format:
 lang: en
 execute:
   python: .venv/bin/python
+  echo: false
 keep-ipynb: false
 ---
 
@@ -18,34 +19,35 @@ keep-ipynb: false
 
 This report presents the work carried out during an internship at **INSEE** (Institut national de la statistique et des études économiques), France's national statistics institute.
 
-The internship focuses on **text classification**, a core natural language processing (NLP) task that consists in assigning a predefined category to a piece of text. At INSEE, this capability is relevant for automatically coding responses to surveys, classifying job descriptions, or categorizing free-text fields in administrative data.
+The internship focuses on **text classification**, a core natural language processing (NLP) task that consists in assigning a predefined category to a piece of text. At INSEE, a concrete use case is the automatic coding of business creation declarations: when a company is founded, its activity is described in free text by the declarant and must be assigned a code from the NAF (*Nomenclature des Activités Françaises*), a hierarchical classification of economic activities. A model has recently been deployed to automate this coding process, making it a concrete reference point for evaluating the lightweight architectures studied in this internship.
 
-## Motivation
+Large language models (LLMs) achieve strong performance on text classification, but they come with significant computational costs. In a production environment processing millions of records, lighter and faster alternatives are desirable. This internship investigates whether **lightweight neural architectures** — such as FastText-style mean-pooling models and small transformer encoders — can reach competitive accuracy at a fraction of the cost. All experiments are built on top of [**`torchTextClassifiers`**](https://github.com/InseeFrLab/torchTextClassifiers), a Python package developed at INSEE that provides a unified interface for training and evaluating these architectures.
 
-Large language models (LLMs) achieve strong performance on text classification, but they come with significant computational costs. In a production environment processing millions of records, lighter and faster alternatives are desirable.
-
-This internship investigates whether **lightweight neural architectures** — such as FastText-style mean-pooling models and small transformer encoders — can reach competitive accuracy at a fraction of the cost.
-
-## Objectives
-
-The main objectives of this internship are:
+The main objectives are:
 
 1. Benchmark lightweight text classification models across several datasets.
 2. Study the impact of key hyperparameters: embedding dimension, number of transformer layers, number of attention heads, vocabulary size, and learning rate.
 3. Evaluate the trade-off between model size (number of parameters) and classification accuracy, through systematic validation loss curves.
-4. Analyse the effect of training data size by training each model on increasing subsets of the data (10%, 20%, …, 100%) to study data efficiency and learning curves.
-5. Compare three architecture families — from simple mean-pooling to attention-based models — to understand when the added complexity pays off.
+4. Compare three architecture families — from simple mean-pooling to attention-based models — to understand when the added complexity pays off.
 
-## Datasets
+## Benchmark Setup
 
-The benchmark covers the following publicly available text classification datasets:
+### Datasets
 
-| Dataset        | Task             | Classes |
-|----------------|------------------|---------|
-| IMDb           | Sentiment analysis | 2     |
-| Amazon reviews | Sentiment analysis | 5     |
+The benchmark covers two publicly available sentiment analysis datasets of increasing difficulty.
 
-## Models
+**IMDb** (`stanfordnlp/imdb`) is the Large Movie Review Dataset [@maas2011]. It contains 25,000 training and 25,000 test English movie reviews, each labelled as positive or negative (reviews with a score ≥ 7/10 or ≤ 4/10 on IMDb). The binary nature of the task and the length of the reviews make it a standard NLP benchmark. SOTA accuracy reaches ~97% with large transformer ensembles; RoBERTa alone achieves ~95%.
+
+**Amazon Reviews** (`amazon_reviews_multi`, English) is the Multilingual Amazon Reviews Corpus (MARC) introduced by @keung2020. The English split contains 200,000 training and 5,000 test product reviews, each rated from 1 to 5 stars. The input combines the review title and body. The 5-class ordinal nature of the task makes it harder than binary sentiment: the mBERT baseline from the original paper reaches 63.3% accuracy.
+
+In our experiments, 2,000 (IMDb) and 5,000 (Amazon) training examples are held out as a validation set, leaving 23,000 and 195,000 examples for training respectively.
+
+| Dataset | Classes | Train | Val | Test | SOTA (acc.) |
+|---|---|---|---|---|---|
+| IMDb | 2 | 23,000 | 2,000 | 5,000 | ~97% (ensemble) |
+| Amazon reviews | 5 | 195,000 | 5,000 | 5,000 | 63.3% (mBERT) |
+
+### Models
 
 Three architectures of increasing complexity are compared:
 
@@ -55,29 +57,450 @@ Three architectures of increasing complexity are compared:
 
 All three architectures use a **WordPiece tokenizer** trained on the training data, with vocabulary sizes ranging from 2,000 to 20,000 tokens.
 
-
-## Experimental Setup
+### Experimental Setup
 
 All experiments are tracked with **MLflow** and run on GPU via **Argo Workflows** on the INSEE datalab infrastructure. Each configuration is trained for up to 40 epochs with early stopping (patience = 5).
 
-### Hyperparameter grid search
+The grid search covers 624 configurations in total. For FastText (`n_layers=0`), `n_head` and label attention are not applicable, yielding $4 \times 4 \times 3 = 48$ runs. For transformer architectures (`n_layers` ∈ {1, 2}), the full grid gives $4 \times 2 \times 3 \times 2 \times 4 \times 3 = 576$ runs.
 
-The key hyperparameters explored are:
+| Hyperparameter | Values | Applies to |
+|---|---|---|
+| Embedding dimension | 64, 128, 256, 512 | All |
+| Number of layers (`n_layers`) | 0, 1, 2 | All |
+| Vocabulary size | 2,000 / 5,000 / 10,000 / 20,000 | All |
+| Learning rate | 0.0001, 0.0005, 0.001 | All |
+| Attention heads (`n_head`) | 2, 4, 8 | `n_layers` ≥ 1 |
+| Label attention (`n_heads_label_attention`) | none, 4 | `n_layers` ≥ 1 |
 
-- Embedding dimension: 64, 128, 256, 512
-- Number of transformer layers: 0, 1, 2
-- Number of attention heads: 2, 4, 8
-- Vocabulary size: 2,000 / 5,000 / 10,000 / 20,000
-- Learning rate: 0.0001, 0.001
+## Amazon reviews — Experimental Analysis
 
-### Validation loss vs. number of parameters
+```{python}
+#| label: fetch-mlflow-amazon
 
-For each dataset and architecture, the final validation loss is plotted against the total number of trainable parameters. This study reveals whether increasing model capacity consistently improves performance or leads to overfitting, and helps identify the optimal operating regime for each architecture.
+from pathlib import Path
+import mlflow
+import pandas as pd
 
-### Training data size study (learning curves)
+CACHE_PATH = Path("benchmark/results/amazon_runs.csv")
+CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-Each model configuration is re-trained on successive fractions of the training set: 10%, 20%, 30%, …, 100%. The resulting accuracy and validation loss curves highlight:
+if CACHE_PATH.exists():
+    df = pd.read_csv(CACHE_PATH)
+    if "metrics.train_time_s" in df.columns:
+        df = df.rename(columns={"metrics.train_time_s": "train_time_s"})
+else:
+    df = mlflow.search_runs(experiment_names=["amazon"], max_results=2000)
+    df = df[df["status"] == "FINISHED"].copy()
+    df = df.rename(columns={
+        "params.emb_dim":                  "emb_dim",
+        "params.n_layers":                 "n_layers",
+        "params.n_head":                   "n_head",
+        "params.n_heads_label_attention":  "n_heads_label_attn",
+        "params.vocab_size":               "vocab_size",
+        "params.lr":                       "lr",
+        "metrics.num_params":              "num_params",
+        "metrics.test_accuracy":           "test_accuracy",
+        "metrics.test_f1_macro":           "test_f1_macro",
+        "metrics.train_time_s":            "train_time_s",
+    })
 
-- How quickly each architecture reaches its performance ceiling.
-- Whether simpler models (FastText) are more data-efficient than heavier ones.
-- The minimum amount of labelled data needed to reach a given accuracy threshold.
+    client = mlflow.MlflowClient()
+    def get_min_val_loss(run_id):
+        history = client.get_metric_history(run_id, "val_loss")
+        return min(m.value for m in history) if history else None
+
+    df["min_val_loss"] = df["run_id"].apply(get_min_val_loss)
+
+    for col in ["emb_dim", "n_layers", "vocab_size"]:
+        df[col] = df[col].astype(int)
+    df["lr"] = df["lr"].astype(float)
+    df["num_params"] = df["num_params"].astype(int)
+
+    def arch_label(row):
+        if row["n_layers"] == 0:
+            return "FastText"
+        elif str(row["n_heads_label_attn"]) == "4":
+            return "Label Attention"
+        else:
+            return f"Transformer (L={row['n_layers']})"
+
+    df["architecture"] = df.apply(arch_label, axis=1)
+    df.to_csv(CACHE_PATH, index=False)
+```
+
+### Validation loss vs. number of parameters & stability
+
+A key observation is that **`n_head` and `lr` do not affect `num_params`**. In a standard transformer, the total size of the attention matrices is $4 \times d^2$ regardless of how many heads are used, since $d_{\text{head}} = d / n_{\text{head}}$. Similarly, `lr` is a training hyperparameter with no effect on architecture. As a result, for any fixed combination of `(emb_dim, n_layers, vocab_size)`, there are exactly $3 \times 3 = 9$ runs sharing the same `num_params` (3 values of `n_head` × 3 values of `lr`).
+
+This motivates two complementary views on the first tab:
+
+- **Scatter plot**: all 624 runs, showing the full spread of achievable val_loss for a given parameter budget.
+- **Curve plot**: for each `(architecture, emb_dim, vocab_size)` group, take the `min(val_loss)` over `n_head` and `lr`, collapsing the 9 runs into a single best-case point. Sorting by `num_params` then yields one clean curve per architecture, tracing the performance frontier as model capacity grows.
+
+The second tab shows the **distribution of validation loss across all runs** for each architecture. A narrow violin indicates that the architecture is robust to hyperparameter choice, while a wide one signals high sensitivity.
+
+::: {.panel-tabset}
+## Val loss vs. parameters
+
+```{python}
+#| label: fig-pareto
+#| fig-cap: "Validation loss vs. number of trainable parameters, by architecture family. Each point is one hyperparameter configuration; the solid line shows the mean val_loss averaged over `n_head` and `lr` for each `(architecture, emb_dim, vocab_size)` group."
+#| out-width: "100%"
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+COLORS = {
+    "FastText":              "#2196F3",
+    "Transformer (L=1)":    "#FF9800",
+    "Transformer (L=2)":    "#F44336",
+    "Label Attention":      "#4CAF50",
+}
+
+df_curves = (
+    df.groupby(["architecture", "emb_dim", "vocab_size", "num_params"], as_index=False)
+    ["min_val_loss"].mean()
+    .sort_values("num_params")
+)
+
+fig, ax = plt.subplots(figsize=(8, 5))
+
+for arch, group in df.groupby("architecture"):
+    ax.scatter(
+        group["num_params"],
+        group["min_val_loss"],
+        color=COLORS.get(arch, "grey"),
+        alpha=0.3,
+        s=20,
+        linewidths=0,
+    )
+
+for arch, group in df_curves.groupby("architecture"):
+    ax.plot(
+        group["num_params"],
+        group["min_val_loss"],
+        label=arch,
+        color=COLORS.get(arch, "grey"),
+        marker="o",
+        markersize=4,
+        linewidth=1.5,
+    )
+
+ax.set_xlabel("Number of parameters")
+ax.set_ylabel("Validation loss")
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x/1e6:.1f}M" if x >= 1e6 else f"{int(x/1e3)}k"))
+ax.legend(title="Architecture")
+ax.grid(True, linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+## Stability
+
+```{python}
+#| label: fig-violin
+#| fig-cap: "Distribution of validation loss across all runs, by architecture. The violin shows the full distribution; the inner box shows the interquartile range and median. A narrower violin indicates a more robust architecture under hyperparameter variation."
+
+import matplotlib.patches as mpatches
+
+arch_order = ["FastText", "Transformer (L=1)", "Transformer (L=2)", "Label Attention"]
+arch_order = [a for a in arch_order if a in df["architecture"].unique()]
+
+data_by_arch = [df[df["architecture"] == a]["min_val_loss"].dropna().values for a in arch_order]
+colors_list = [COLORS.get(a, "grey") for a in arch_order]
+
+fig, ax = plt.subplots(figsize=(8, 5))
+
+parts = ax.violinplot(data_by_arch, positions=range(len(arch_order)), showmedians=False, showextrema=False)
+
+for i, (pc, color) in enumerate(zip(parts["bodies"], colors_list)):
+    pc.set_facecolor(color)
+    pc.set_alpha(0.6)
+
+bp = ax.boxplot(
+    data_by_arch,
+    positions=range(len(arch_order)),
+    widths=0.08,
+    patch_artist=True,
+    medianprops=dict(color="white", linewidth=2),
+    whiskerprops=dict(linewidth=1.2),
+    capprops=dict(linewidth=1.2),
+    flierprops=dict(marker="o", markersize=3, alpha=0.4),
+)
+for patch, color in zip(bp["boxes"], colors_list):
+    patch.set_facecolor(color)
+    patch.set_alpha(0.9)
+
+ax.set_xticks(range(len(arch_order)))
+ax.set_xticklabels(arch_order)
+ax.set_ylabel("Validation loss")
+ax.grid(True, axis="y", linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+**Val loss vs. parameters.** FastText plateaus around 0.94 regardless of model size, showing that averaging embeddings without any attention mechanism hits a hard performance ceiling. The two transformer variants improve steadily with capacity: Transformer (L=2) reaches the lowest validation loss (~0.87) and remains the best architecture across all parameter budgets. Transformer (L=1) sits in between, around 0.89–0.90. Label Attention is noisier — its curve oscillates more than the others, suggesting higher sensitivity to the specific hyperparameter combination.
+
+**Stability.** FastText is by far the most stable architecture: its violin is narrow and concentrated around 0.94–0.95, meaning the choice of hyperparameters has little impact on the outcome. Transformer (L=2) achieves the best median performance but at the cost of a wide distribution (~0.86–0.91), indicating that some configurations work much better than others. Label Attention shows a similar spread to Transformer (L=2) but with a slightly higher median, making it both sensitive and less performant on average.
+
+### Effect of learning rate
+
+```{python}
+#| label: fig-lr
+#| fig-cap: "Mean validation loss vs. number of parameters, one curve per learning rate. Each point is the average min_val_loss over all other hyperparameters for a given (lr, num_params) combination."
+
+LR_COLORS = {"0.0001": "#1565C0", "0.0005": "#FF8F00", "0.001": "#B71C1C"}
+
+df_lr = (
+    df.groupby(["lr", "num_params"], as_index=False)["min_val_loss"].mean()
+    .sort_values("num_params")
+)
+
+fig, ax = plt.subplots(figsize=(8.25, 5))
+for lr_val, group in df_lr.groupby("lr"):
+    ax.plot(
+        group["num_params"],
+        group["min_val_loss"],
+        label=f"lr={lr_val}",
+        color=LR_COLORS.get(str(lr_val), "grey"),
+        marker="o", markersize=4, linewidth=1.5,
+    )
+ax.set_xlabel("Number of parameters")
+ax.set_ylabel("Mean validation loss (averaged over all other hyperparameters)")
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x/1e6:.1f}M" if x >= 1e6 else f"{int(x/1e3)}k"))
+ax.legend(title="lr")
+ax.grid(True, linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+The three learning rates produce very similar curves overall, indicating that learning rate has a relatively modest effect compared to architectural choices. In the small model regime (< 2.5M parameters), all three are noisy and interleaved — no rate consistently dominates. For larger models, a separation emerges: `lr=0.0001` pulls ahead and achieves the lowest validation loss, while `lr=0.001` tends to perform worst, likely overshooting with the larger capacity. `lr=0.0005` sits in between throughout.
+
+### Effect of vocabulary size and embedding dimension
+
+::: {.panel-tabset}
+## Vocabulary size
+
+```{python}
+#| label: fig-vocab
+#| fig-cap: "Validation loss vs. vocabulary size, by architecture. Each point is one run (small horizontal jitter to reduce overplotting). The solid line shows the mean val_loss averaged over all other hyperparameters."
+
+import numpy as np
+
+vocab_vals = sorted(df["vocab_size"].unique())
+emb_vals = sorted(df["emb_dim"].unique())
+archs = sorted(df["architecture"].unique())
+
+jitter_map = {arch: (i - len(archs) / 2) * 150 for i, arch in enumerate(archs)}
+jitter_map_emb = {arch: (i - len(archs) / 2) * 4 for i, arch in enumerate(archs)}
+
+df_vocab_mean = (
+    df.groupby(["architecture", "vocab_size"], as_index=False)["min_val_loss"].mean()
+    .sort_values("vocab_size")
+)
+df_emb_mean = (
+    df.groupby(["architecture", "emb_dim"], as_index=False)["min_val_loss"].mean()
+    .sort_values("emb_dim")
+)
+
+fig, ax = plt.subplots(figsize=(8, 5))
+for arch, group in df.groupby("architecture"):
+    jitter = jitter_map[arch]
+    ax.scatter(
+        group["vocab_size"] + jitter,
+        group["min_val_loss"],
+        color=COLORS.get(arch, "grey"),
+        alpha=0.3, s=15, linewidths=0,
+    )
+for arch, group in df_vocab_mean.groupby("architecture"):
+    jitter = jitter_map[arch]
+    ax.plot(
+        group["vocab_size"] + jitter,
+        group["min_val_loss"],
+        label=arch,
+        color=COLORS.get(arch, "grey"),
+        marker="o", markersize=5, linewidth=2,
+    )
+ax.set_xlabel("Vocabulary size")
+ax.set_ylabel("Validation loss")
+ax.set_xticks(vocab_vals)
+ax.set_xticklabels([f"{v:,}" for v in vocab_vals])
+ax.legend(loc="upper right")
+ax.grid(True, linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+## Embedding dimension
+
+```{python}
+#| label: fig-emb
+#| fig-cap: "Validation loss vs. embedding dimension, by architecture. Each point is one run (small horizontal jitter to reduce overplotting). The solid line shows the mean val_loss averaged over all other hyperparameters."
+
+fig, ax = plt.subplots(figsize=(8, 5))
+for arch, group in df.groupby("architecture"):
+    jitter = jitter_map_emb[arch]
+    ax.scatter(
+        group["emb_dim"] + jitter,
+        group["min_val_loss"],
+        color=COLORS.get(arch, "grey"),
+        alpha=0.3, s=15, linewidths=0,
+    )
+for arch, group in df_emb_mean.groupby("architecture"):
+    jitter = jitter_map_emb[arch]
+    ax.plot(
+        group["emb_dim"] + jitter,
+        group["min_val_loss"],
+        label=arch,
+        color=COLORS.get(arch, "grey"),
+        marker="o", markersize=5, linewidth=2,
+    )
+ax.set_xlabel("Embedding dimension")
+ax.set_ylabel("Validation loss")
+ax.set_xticks(emb_vals)
+ax.set_xticklabels([str(v) for v in emb_vals])
+ax.legend(loc="upper right")
+ax.grid(True, linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+**Vocabulary size.** All architectures benefit modestly from a larger vocabulary, but with diminishing returns after 10,000 tokens. FastText remains largely unaffected, barely improving from 0.952 at 2k to 0.940 at 20k. Transformer-based models show a clearer gain up to 10k, after which the curves flatten — suggesting that most of the useful vocabulary is captured within that range for this dataset.
+
+**Embedding dimension.** The picture is similar: performance improves as embedding size grows from 64 to 256, but gains stall or even reverse at 512. Transformer (L=2) peaks at 256 (~0.873) then slightly degrades, suggesting that very large embeddings bring no benefit and may introduce optimization difficulties. FastText is again nearly insensitive to this parameter. For transformer architectures, **256 appears to be the sweet spot**.
+
+### Effect of number of attention heads
+
+```{python}
+#| label: fig-nhead
+#| fig-cap: "Validation loss vs. number of attention heads, by architecture (transformer-based models only). Each point is one run (small horizontal jitter to reduce overplotting). The solid line shows the mean val_loss averaged over all other hyperparameters."
+
+df_attn = df[df["n_layers"] > 0].copy()
+df_attn["n_head"] = df_attn["n_head"].astype(int)
+
+archs_attn = sorted(df_attn["architecture"].unique())
+head_vals = sorted(df_attn["n_head"].unique())
+jitter_map_head = {arch: (i - len(archs_attn) / 2) * 0.15 for i, arch in enumerate(archs_attn)}
+
+df_head_mean = (
+    df_attn.groupby(["architecture", "n_head"], as_index=False)["min_val_loss"].mean()
+    .sort_values("n_head")
+)
+
+fig, ax = plt.subplots(figsize=(8.25, 4.5))
+
+for arch, group in df_attn.groupby("architecture"):
+    jitter = jitter_map_head[arch]
+    ax.scatter(
+        group["n_head"] + jitter,
+        group["min_val_loss"],
+        color=COLORS.get(arch, "grey"),
+        alpha=0.3,
+        s=15,
+        linewidths=0,
+    )
+
+for arch, group in df_head_mean.groupby("architecture"):
+    jitter = jitter_map_head[arch]
+    ax.plot(
+        group["n_head"] + jitter,
+        group["min_val_loss"],
+        label=arch,
+        color=COLORS.get(arch, "grey"),
+        marker="o", markersize=5, linewidth=2,
+    )
+
+ax.set_xlabel("Number of attention heads")
+ax.set_ylabel("Validation loss")
+ax.set_xticks(head_vals)
+ax.set_xticklabels([str(v) for v in head_vals])
+ax.legend(title="Architecture", loc="upper left", bbox_to_anchor=(1.01, 1), borderaxespad=0)
+ax.grid(True, linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+The number of attention heads has virtually no effect on validation loss across all three architectures. The mean curves are essentially flat from 2 to 8 heads, and the ranking between architectures remains unchanged. This is consistent with the theoretical expectation: as the total attention matrix size is fixed at $4 \times d^2$, splitting it into more heads simply redistributes capacity without adding parameters.je ne
+
+### Training time
+
+```{python}
+#| label: fig-train-time
+#| fig-cap: "Validation loss vs. training time (seconds), by architecture. Each point is one run."
+
+fig, ax = plt.subplots(figsize=(8.25, 5))
+
+for arch, group in df.groupby("architecture"):
+    ax.scatter(
+        group["train_time_s"],
+        group["min_val_loss"],
+        label=arch,
+        color=COLORS.get(arch, "grey"),
+        alpha=0.5,
+        s=20,
+        linewidths=0,
+    )
+
+ax.set_xlabel("Training time (s)")
+ax.set_ylabel("Validation loss")
+ax.legend(title="Architecture")
+ax.grid(True, linewidth=0.4, alpha=0.5)
+plt.tight_layout()
+plt.show()
+```
+
+### Interaction: embedding dimension × vocabulary size
+
+```{python}
+#| label: fig-heatmap
+#| fig-cap: "Mean validation loss for each embedding dimension × vocabulary size combination, by architecture. Lighter cells indicate lower validation loss."
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+arch_order = ["FastText", "Transformer (L=1)", "Transformer (L=2)", "Label Attention"]
+arch_order = [a for a in arch_order if a in df["architecture"].unique()]
+
+emb_vals = sorted(df["emb_dim"].unique())
+vocab_vals = sorted(df["vocab_size"].unique())
+
+vmin = df.groupby(["architecture", "emb_dim", "vocab_size"])["min_val_loss"].mean().min()
+vmax = df.groupby(["architecture", "emb_dim", "vocab_size"])["min_val_loss"].mean().max()
+
+fig, axes = plt.subplots(2, 2, figsize=(8, 6.5), layout="constrained")
+axes_flat = axes.flatten()
+
+for ax, arch in zip(axes_flat, arch_order):
+    pivot = (
+        df[df["architecture"] == arch]
+        .groupby(["emb_dim", "vocab_size"])["min_val_loss"]
+        .mean()
+        .unstack("vocab_size")
+        .reindex(index=emb_vals, columns=vocab_vals)
+    )
+    im = ax.imshow(pivot.values, aspect="auto", cmap="viridis_r", vmin=vmin, vmax=vmax)
+    ax.set_xticks(range(len(vocab_vals)))
+    ax.set_xticklabels([f"{v:,}" for v in vocab_vals], rotation=30, ha="right")
+    ax.set_yticks(range(len(emb_vals)))
+    ax.set_yticklabels([str(v) for v in emb_vals])
+    ax.set_xlabel("Vocabulary size")
+    ax.set_ylabel("Embedding dimension")
+    ax.set_title(arch)
+    for i, emb in enumerate(emb_vals):
+        for j, vocab in enumerate(vocab_vals):
+            val = pivot.loc[emb, vocab]
+            if not np.isnan(val):
+                ax.text(j, i, f"{val:.3f}", ha="center", va="center", fontsize=7.5, color="white")
+
+fig.colorbar(im, ax=axes, label="Mean val loss", shrink=0.6, pad=0.02)
+fig.suptitle("Mean validation loss: emb_dim × vocab_size")
+plt.show()
+```
+
+## IMDb
+
+*Coming soon.*

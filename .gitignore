@@ -8,7 +8,7 @@ lightning_logs/
 checkpoints/
 
 # Benchmark artifacts
-benchmark/results/models/
+benchmark/results/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -35,6 +35,7 @@ models/
 index_files/
 /.quarto/
 **/*.quarto_ipynb
+index.html
 
 # Schemas
 schemas/

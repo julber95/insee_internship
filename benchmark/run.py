@@ -276,6 +276,11 @@ def main(cfg: DictConfig):
 
         preds = batch_predict(X_test)
 
+        preds_path = RESULTS_DIR / f"predictions_{mlflow.active_run().info.run_id}.npz"
+        np.savez(preds_path, X_test=X_test, y_test=y_test, y_pred=preds)
+        mlflow.log_artifact(str(preds_path), artifact_path="predictions")
+        preds_path.unlink()
+
         test_accuracy = round(accuracy_score(y_test, preds), 4)
         test_f1_macro = round(f1_score(y_test, preds, average="macro"), 4)
 
@@ -290,6 +295,8 @@ def main(cfg: DictConfig):
         ConfusionMatrixDisplay(confusion_matrix(y_test, preds)).plot(ax=ax)
         mlflow.log_figure(fig, "confusion_matrix.png")
         plt.close(fig)
+
+        mlflow.log_artifacts(save_path, artifact_path="model")
 
         print(f"Test Accuracy : {test_accuracy:.4f}")
         print(f"Test F1 macro : {test_f1_macro:.4f}")
