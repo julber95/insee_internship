@@ -13,39 +13,32 @@ spec:
     - name: main-dag
       dag:
         tasks:
-          - name: train-gpu-1
+          - name: train-gpu-L2
             template: trainer-gpu
             arguments:
               parameters:
-                - name: emb_dims
-                  value: "64"
+                - name: n_layers
+                  value: "2"
 
-          - name: train-gpu-2
+          - name: train-gpu-L4
             template: trainer-gpu
             arguments:
               parameters:
-                - name: emb_dims
-                  value: "128"
+                - name: n_layers
+                  value: "4"
 
-          - name: train-gpu-3
+          - name: train-gpu-L6
             template: trainer-gpu
             arguments:
               parameters:
-                - name: emb_dims
-                  value: "256"
-
-          - name: train-gpu-4
-            template: trainer-gpu
-            arguments:
-              parameters:
-                - name: emb_dims
-                  value: "512"
+                - name: n_layers
+                  value: "6"
 
     # ── GPU Trainer template ──────────────────────────────────────────────────
     - name: trainer-gpu
       inputs:
         parameters:
-          - name: emb_dims
+          - name: n_layers
       script:
         image: "inseefrlab/onyxia-vscode-pytorch:py3.13.12-gpu"
         imagePullPolicy: Always
@@ -55,34 +48,20 @@ spec:
           git clone -b main https://github.com/julber95/insee_internship.git
           cd insee_internship
 
-          # n_layers=0: FastText-style — n_head irrelevant, sweep lr and vocab_size
-          uv run python -m benchmark.run \
-            dataset=amazon \
-            tokenizer=wordpiece \
-            model.embedding_dim={{inputs.parameters.emb_dims}} \
-            model.n_layers=0 \
-            model.n_heads_label_attention=null \
-            tokenizer.vocab_size=2000,5000,10000,20000 \
-            training.batch_size=128 \
-            training.lr=0.0001,0.001,0.0005 \
-            training.num_epochs=40 \
-            training.patience_early_stopping=5 \
-            -m
-
-          # n_layers=1,2: sweep n_head (n_kv_head=n_head), label attention, lr and vocab_size
-          # n_kv_head is always set equal to n_head to satisfy the GQA constraint
-          for n_head in 2 4 8; do
+          # emb_dim=256, vocab_size=10000, lr=0.0001 fixed
+          # sweep n_head — scheduler ReduceLROnPlateau configured in run.py
+          for n_head in 2 4 8 16; do
             uv run python -m benchmark.run \
               dataset=amazon \
               tokenizer=wordpiece \
-              model.embedding_dim={{inputs.parameters.emb_dims}} \
-              model.n_layers=1,2 \
+              model.embedding_dim=256 \
+              model.n_layers={{inputs.parameters.n_layers}} \
               model.n_head=$n_head \
               model.n_kv_head=$n_head \
-              model.n_heads_label_attention=null,4 \
-              tokenizer.vocab_size=2000,5000,10000,20000 \
+              model.n_heads_label_attention=null \
+              tokenizer.vocab_size=10000 \
               training.batch_size=128 \
-              training.lr=0.0001,0.001,0.0005 \
+              training.lr=0.0001 \
               training.num_epochs=40 \
               training.patience_early_stopping=5 \
               -m

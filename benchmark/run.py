@@ -223,6 +223,9 @@ def main(cfg: DictConfig):
         raw_labels=False,
         raw_categorical_inputs=value_encoder is not None,
         save_path=save_path,
+        optimizer_params={"weight_decay": 1e-4},
+        scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
+        scheduler_params={"mode": "min", "factor": 0.5, "patience": 2},
     )
 
     with mlflow.start_run():
