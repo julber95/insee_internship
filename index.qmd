@@ -575,54 +575,135 @@ fig.show()
 
 import random
 from collections import Counter
+from plotly.subplots import make_subplots
 random.seed(42)
 
-arch  = ARCHS_AVAIL[0]
-d     = preds_by_arch[arch]
+SEG_KEYS   = ["Correct", "Off by 1", "Off by 2", "Off by 3+"]
+SEG_COLORS = {"Correct": "#43A047", "Off by 1": "#FDD835", "Off by 2": "#FB8C00", "Off by 3+": "#E53935"}
+n_archs    = len(ARCHS_AVAIL)
+labels_d   = [f"±{dd} star{'s' if dd>1 else ''}" for dd in range(1, 5)]
+
+# Pre-compute per architecture
+arch_segs, arch_bias = {}, {}
+for arch in ARCHS_AVAIL:
+    d      = preds_by_arch[arch]
+    y_t, y_p = d["y_test"], d["y_pred"]
+    dist   = np.abs(y_p - y_t)
+    n      = len(dist)
+    arch_segs[arch] = {
+        "Correct":   (dist == 0).sum() / n * 100,
+        "Off by 1":  (dist == 1).sum() / n * 100,
+        "Off by 2":  (dist == 2).sum() / n * 100,
+        "Off by 3+": (dist >= 3).sum() / n * 100,
+    }
+    signed = y_p - y_t
+    n_tot  = len(signed)
+    arch_bias[arch] = {
+        "over":  [(signed ==  dd).sum() / n_tot * 100 for dd in range(1, 5)],
+        "under": [(signed == -dd).sum() / n_tot * 100 for dd in range(1, 5)],
+    }
+
+fig = make_subplots(
+    rows=2, cols=1,
+    specs=[[{"type": "xy"}], [{"type": "xy"}]],
+    row_heights=[0.28, 0.72],
+    vertical_spacing=0.12,
+)
+
+# Row 1 — stacked bar (4 traces per arch)
+for i, arch in enumerate(ARCHS_AVAIL):
+    segs = arch_segs[arch]
+    for seg in SEG_KEYS:
+        pct = segs[seg]
+        fig.add_trace(go.Bar(
+            x=[pct], y=[""], orientation="h",
+            name=seg, legendgroup=seg, showlegend=(i == 0),
+            marker_color=SEG_COLORS[seg],
+            text=f"<b>{seg}</b><br>{pct:.1f}%",
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(size=12, color="white" if seg != "Off by 1" else "#333"),
+            hovertemplate=f"<b>{seg}</b>: {pct:.1f}%<extra></extra>",
+            visible=(i == 0),
+        ), row=1, col=1)
+
+# Row 2 — diverging bar (2 traces per arch)
+for i, arch in enumerate(ARCHS_AVAIL):
+    b = arch_bias[arch]
+    fig.add_trace(go.Bar(
+        x=[-u for u in b["under"]], y=labels_d,
+        orientation="h", name="Under-predicted",
+        legendgroup="under", showlegend=(i == 0),
+        marker_color="#1565C0",
+        hovertemplate="%{y} — under: <b>%{customdata:.1f}%</b><extra></extra>",
+        customdata=b["under"],
+        visible=(i == 0),
+    ), row=2, col=1)
+    fig.add_trace(go.Bar(
+        x=b["over"], y=labels_d,
+        orientation="h", name="Over-predicted",
+        legendgroup="over", showlegend=(i == 0),
+        marker_color="#E53935",
+        hovertemplate="%{y} — over: <b>%{x:.1f}%</b><extra></extra>",
+        visible=(i == 0),
+    ), row=2, col=1)
+
+n_seg_traces  = n_archs * 4
+n_bias_traces = n_archs * 2
+
+def make_vis(k):
+    v = [False] * (n_seg_traces + n_bias_traces)
+    for j in range(4):
+        v[k * 4 + j] = True
+    v[n_seg_traces + k * 2]     = True
+    v[n_seg_traces + k * 2 + 1] = True
+    return v
+
+fig.update_xaxes(range=[0, 100], ticksuffix="%", showgrid=False, row=1, col=1)
+fig.update_yaxes(showticklabels=False, row=1, col=1)
+fig.update_xaxes(
+    tickvals=[-15, -10, -5, 0, 5, 10, 15],
+    ticktext=["15%", "10%", "5%", "0", "5%", "10%", "15%"],
+    title_text="% of test examples", row=2, col=1,
+)
+fig.update_yaxes(autorange="reversed", row=2, col=1)
+fig.add_vline(x=0, line_width=1.5, line_color="#333", row=2, col=1)
+
+fig.update_layout(
+    barmode="relative",
+    template="simple_white",
+    legend=dict(orientation="h", x=0.5, y=-0.08, xanchor="center"),
+    height=560, margin=dict(t=110, b=10),
+    annotations=[dict(
+        text="<b>Model</b>", x=0, xanchor="left", xref="paper",
+        y=1.16, yanchor="bottom", yref="paper",
+        showarrow=False, font=dict(size=12, color="#555"),
+    )],
+    updatemenus=[dict(
+        type="buttons", direction="right",
+        buttons=[
+            dict(label=arch, method="update", args=[{"visible": make_vis(i)}])
+            for i, arch in enumerate(ARCHS_AVAIL)
+        ],
+        x=0, xanchor="left", y=1.12, yanchor="top",
+        showactive=True, bgcolor="#f0f0f0",
+        bordercolor="#cccccc", borderwidth=1,
+        font=dict(size=12, color="#222"),
+        pad=dict(l=4, r=4, t=4, b=4),
+    )],
+)
+fig.show()
+```
+
+### Examples
+
+```{python}
+#| label: fig-examples-amazon
+
+arch   = ARCHS_AVAIL[0]
+d      = preds_by_arch[arch]
 y_test, y_pred = d["y_test"], d["y_pred"]
 X_test = d["X_test"]
 
-# — Stacked bar —
-distances = np.abs(y_pred - y_test)
-n = len(distances)
-segments = {
-    "Correct":   (distances == 0).sum() / n * 100,
-    "Off by 1":  (distances == 1).sum() / n * 100,
-    "Off by 2":  (distances == 2).sum() / n * 100,
-    "Off by 3+": (distances >= 3).sum() / n * 100,
-}
-seg_colors = {"Correct": "#43A047", "Off by 1": "#FDD835", "Off by 2": "#FB8C00", "Off by 3+": "#E53935"}
-
-fig_bar = go.Figure()
-for label, pct in segments.items():
-    fig_bar.add_trace(go.Bar(
-        x=[pct], y=[""],
-        orientation="h",
-        name=label,
-        marker_color=seg_colors[label],
-        text=f"<b>{label}</b><br>{pct:.1f}%",
-        textposition="inside",
-        insidetextanchor="middle",
-        textfont=dict(size=12, color="white" if label != "Off by 1" else "#333"),
-        hovertemplate=f"<b>{label}</b>: {pct:.1f}%<extra></extra>",
-    ))
-fig_bar.update_layout(
-    template="simple_white",
-    barmode="stack",
-    xaxis=dict(title="% of test examples", range=[0, 100], ticksuffix="%"),
-    yaxis=dict(showticklabels=False),
-    legend=dict(orientation="h", x=1, y=-0.35, xanchor="right", yanchor="top"),
-    xaxis_title=None,
-    annotations=[dict(
-        text="% of test examples", x=0, y=-0.35, xref="paper", yref="paper",
-        showarrow=False, xanchor="left", yanchor="top", font=dict(size=12, color="#444"),
-    )],
-    height=130,
-    margin=dict(t=10, b=55, r=10),
-)
-fig_bar.show()
-
-# — Examples table —
 texts = X_test.tolist() if X_test.ndim == 1 else X_test[:, 0].tolist()
 mask  = y_pred != y_test
 pair_counts = Counter(zip(y_test[mask], y_pred[mask]))
@@ -642,50 +723,6 @@ for true_c, pred_c in top_pairs:
 
 df_errors = pd.DataFrame(rows)
 df_errors.style.set_properties(**{"text-align": "left", "white-space": "pre-wrap"})
-```
-
-### Prediction bias
-
-```{python}
-#| label: fig-bias-amazon
-
-arch    = ARCHS_AVAIL[0]
-d       = preds_by_arch[arch]
-signed  = d["y_pred"] - d["y_test"]
-n_total = len(signed)
-
-over_pct  = [(signed ==  dd).sum() / n_total * 100 for dd in range(1, 5)]
-under_pct = [(signed == -dd).sum() / n_total * 100 for dd in range(1, 5)]
-labels_d  = [f"±{dd} star{'s' if dd>1 else ''}" for dd in range(1, 5)]
-
-fig = go.Figure()
-fig.add_trace(go.Bar(
-    x=[-u for u in under_pct], y=labels_d,
-    orientation="h", name="Under-predicted (too low)",
-    marker_color="#1565C0",
-    hovertemplate="%{y} — under: <b>%{customdata:.1f}%</b><extra></extra>",
-    customdata=under_pct,
-))
-fig.add_trace(go.Bar(
-    x=over_pct, y=labels_d,
-    orientation="h", name="Over-predicted (too high)",
-    marker_color="#E53935",
-    hovertemplate="%{y} — over: <b>%{x:.1f}%</b><extra></extra>",
-))
-fig.add_vline(x=0, line_width=1.5, line_color="#333")
-fig.update_layout(
-    template="simple_white",
-    barmode="overlay",
-    xaxis=dict(
-        title="% of test examples",
-        tickvals=[-15, -10, -5, 0, 5, 10, 15],
-        ticktext=["15%", "10%", "5%", "0", "5%", "10%", "15%"],
-    ),
-    yaxis=dict(autorange="reversed"),
-    legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
-    height=320,
-)
-fig.show()
 ```
 
 :::
