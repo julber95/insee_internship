@@ -59,8 +59,8 @@ Four architectures of increasing complexity are compared, combining two model fa
 
 - **FastText**: embeddings are averaged across tokens and fed directly to a classification head. No attention mechanism, minimal parameter count, very fast at both training and inference.
 - **FastText + Label Attention**: same backbone as FastText, but the mean pool is replaced by a cross-attention step where one learned embedding per class acts as the query, allowing the model to focus on the tokens most relevant to each candidate class.
-- **AttentiveFastText**: transformer encoder blocks (multi-head self-attention + feed-forward) are stacked on top of the embeddings before mean pooling, capturing contextual interactions between tokens.
-- **AttentiveFastText + Label Attention**: same transformer backbone, but with label attention as the aggregation step instead of mean pooling.
+- **FATE** *(FastText Attentive Transformer Encoder)* : transformer encoder blocks (multi-head self-attention + feed-forward) are stacked on top of the embeddings before mean pooling, capturing contextual interactions between tokens.
+- **FATE + Label Attention**: same transformer backbone, but with label attention as the aggregation step instead of mean pooling.
 
 ```{=html}
 <div style="margin:1.5rem 0;font-family:sans-serif;">
@@ -70,7 +70,7 @@ Four architectures of increasing complexity are compared, combining two model fa
   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     <span style="font-size:12px;color:#888;font-weight:600;min-width:90px;">Architecture</span>
     <button id="btn-fasttext"  onclick="switchModel('fasttext')"  style="padding:6px 14px;font-size:13px;font-weight:700;border-radius:20px;cursor:pointer;border:2px solid #1565C0;background:#1565C0;color:#fff;transition:all .25s;">FastText</button>
-    <button id="btn-attentive" onclick="switchModel('attentive')" style="padding:6px 14px;font-size:13px;font-weight:700;border-radius:20px;cursor:pointer;border:2px solid #7b1fa2;background:#fff;color:#7b1fa2;transition:all .25s;">AttentiveFastText</button>
+    <button id="btn-attentive" onclick="switchModel('attentive')" style="padding:6px 14px;font-size:13px;font-weight:700;border-radius:20px;cursor:pointer;border:2px solid #7b1fa2;background:#fff;color:#7b1fa2;transition:all .25s;">FATE</button>
   </div>
   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     <span style="font-size:12px;color:#888;font-weight:600;min-width:90px;">Aggregation</span>
@@ -97,7 +97,10 @@ Four architectures of increasing complexity are compared, combining two model fa
               display:flex;flex-direction:column;align-items:center;gap:0;
               box-shadow:0 2px 12px rgba(0,0,0,.06);">
 
-    <!-- ── LIGNE 1 : Input → WordPiece → Embedding → σ → Mean Pool ── -->
+  <!-- wrapper qui centre le bloc et aligne les lignes entre elles -->
+  <div style="display:flex;flex-direction:column;align-items:flex-start;gap:0;">
+
+    <!-- ── LIGNE 1 : Input → WordPiece → Embedding → σ ── -->
     <div style="display:flex;align-items:center;flex-wrap:nowrap;gap:0;">
 
       <!-- Input stub -->
@@ -116,6 +119,7 @@ Four architectures of increasing complexity are compared, combining two model fa
       <div class="ah-arr">
         <div class="ah-shape">(B, seq_len)</div>
         <div class="ah-line">────▶</div>
+        <div class="ah-dtype">int64</div>
       </div>
 
       <!-- Embedding -->
@@ -129,6 +133,7 @@ Four architectures of increasing complexity are compared, combining two model fa
       <div class="ah-arr">
         <div class="ah-shape">(B, seq_len, emb_dim)</div>
         <div class="ah-line">────▶</div>
+        <div class="ah-dtype">float32</div>
       </div>
 
       <!-- σ RMSNorm token-level -->
@@ -137,10 +142,34 @@ Four architectures of increasing complexity are compared, combining two model fa
         <div class="ah-slim-text">σ</div>
       </div>
 
-      <div class="ah-arr" style="min-width:72px;">
-        <div class="ah-shape">(B, seq, emb)</div>
-        <div class="ah-line">────▶</div>
-      </div>
+    </div>
+
+<!-- ── CONNECTEUR : bas-centre σ → haut-centre Mean Pool ── -->
+<div style="align-self:stretch;position:relative;height:44px;margin:2px 0 4px 0;">
+
+  <!-- Γ : descend depuis σ puis tourne -->
+  <div style="position:absolute;top:0;left:56px;right:62px;height:50%;box-sizing:border-box;
+              border-right:2px solid #ccc;border-bottom:2px solid #ccc;
+              border-bottom-right-radius:8px;"></div>
+
+  <!-- segment vertical bas -->
+  <div style="position:absolute;top:50%;bottom:0;left:56px;width:2px;background:#ccc;"></div>
+
+  <!-- flèche vers le bas -->
+  <div style="position:absolute;bottom:-4px;left:52.2px;width:0;height:0;
+              border-left:5px solid transparent;
+              border-right:5px solid transparent;
+              border-top:8px solid #ccc;"></div>
+
+  <!-- texte -->
+  <div style="position:absolute;top:4px;right:380px;font-size:9px;font-weight:700;color:#888;white-space:nowrap;">
+    (B, seq_len, emb_dim) · float32
+  </div>
+
+</div>
+
+    <!-- ── LIGNE 2 : Mean Pool → σ → Linear → Output ── -->
+    <div style="display:flex;align-items:center;flex-wrap:nowrap;gap:0;">
 
       <!-- Mean Pool -->
       <div id="ft-pool" class="ah-block" style="border-color:#388e3c;background:#e8f5e9;"
@@ -150,16 +179,11 @@ Four architectures of increasing complexity are compared, combining two model fa
         <div class="ah-params" style="color:#388e3c;">masked avg<br>over seq_len</div>
       </div>
 
-    </div>
-
-    <!-- ── CONNECTEUR : Ligne 1 → Ligne 2 ── -->
-    <div style="display:flex;flex-direction:column;align-items:center;padding:10px 0 6px;">
-      <div style="font-size:9px;font-weight:700;color:#666;white-space:nowrap;">(B, emb_dim)</div>
-      <div style="font-size:28px;color:#bbb;line-height:1.1;">↓</div>
-    </div>
-
-    <!-- ── LIGNE 2 : σ (sentence) → Linear → Output ── -->
-    <div style="display:flex;align-items:center;flex-wrap:nowrap;gap:0;">
+      <div class="ah-arr">
+        <div class="ah-shape">(B, emb_dim)</div>
+        <div class="ah-line">────▶</div>
+        <div class="ah-dtype">float32</div>
+      </div>
 
       <!-- σ RMSNorm sentence-level -->
       <div id="ft-rms2" class="ah-slim" style="border-color:#0097a7;background:#e0f7fa;color:#006064;"
@@ -167,9 +191,10 @@ Four architectures of increasing complexity are compared, combining two model fa
         <div class="ah-slim-text">σ</div>
       </div>
 
-      <div class="ah-arr" style="min-width:72px;">
+      <div class="ah-arr" style="min-width:70px;">
         <div class="ah-shape">(B, emb_dim)</div>
         <div class="ah-line">────▶</div>
+        <div class="ah-dtype">float32</div>
       </div>
 
       <!-- Linear -->
@@ -191,10 +216,136 @@ Four architectures of increasing complexity are compared, combining two model fa
 
     </div>
 
+  </div><!-- end wrapper -->
+
   </div><!-- end grand carré -->
 
 </div><!-- end diagram -->
 </div><!-- end fasttext wrap -->
+
+<!-- FastText + Label Attention 2-row diagram -->
+<div id="arch-fasttext-labatt-wrap"
+  style="overflow:hidden;cursor:grab;position:absolute;top:0;left:0;right:0;height:420px;
+         border-radius:8px;border:1px solid #eee;background:#f5f5f5;user-select:none;
+         opacity:0;transform:translateX(60px);pointer-events:none;
+         transition:opacity .38s ease,transform .38s ease;">
+<div id="arch-fasttext-labatt" style="display:block;width:100%;padding:20px;box-sizing:border-box;
+     position:absolute;">
+
+  <div style="border:2px solid #d0d0d0;border-radius:14px;background:#fff;
+              padding:24px 28px;width:100%;box-sizing:border-box;
+              display:flex;flex-direction:column;align-items:center;gap:0;
+              box-shadow:0 2px 12px rgba(0,0,0,.06);">
+
+  <!-- wrapper qui centre le bloc et aligne les lignes entre elles -->
+  <div style="display:flex;flex-direction:column;align-items:flex-start;gap:0;">
+
+    <!-- ── LIGNE 1 : Input → WordPiece → Embedding → σ ── -->
+    <div style="display:flex;align-items:center;flex-wrap:nowrap;gap:0;">
+
+      <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-right:2px;">
+        <div style="font-size:10px;font-weight:700;color:#333;white-space:nowrap;">(B,)&nbsp;str</div>
+        <div style="font-size:13px;color:#bbb;">─────▶</div>
+      </div>
+
+      <div class="ah-block" style="border-color:#78909c;background:#eceff1;"
+        data-tip="The WordPiece tokenizer is trained on the training corpus. It splits raw text into sub-word pieces (e.g. 'playing' : 'play' + 'ing') and maps each to an integer ID. Output is truncated to seq_len tokens; shorter sequences are right-padded with padding_idx=0. An attention mask (1 = real token, 0 = pad) is produced alongside the IDs.">
+        <div class="ah-icon" style="color:#546e7a;">⌨</div>
+        <div class="ah-name" style="color:#37474f;">WordPiece</div>
+      </div>
+
+      <div class="ah-arr">
+        <div class="ah-shape">(B, seq_len)</div>
+        <div class="ah-line">────▶</div>
+        <div class="ah-dtype">int64</div>
+      </div>
+
+      <div class="ah-block" style="border-color:#1976d2;background:#e3f2fd;"
+        data-tip="nn.Embedding : a learnable look-up table of shape (vocab_size × emb_dim). Each token ID selects one row, replacing the integer with a dense float vector. Parameters: vocab_size × emb_dim (the largest component of FastText).">
+        <div class="ah-icon" style="color:#1565c0;">⊞</div>
+        <div class="ah-name" style="color:#0d47a1;">Embedding</div>
+        <div class="ah-params" style="color:#1976d2;">vocab_size × emb_dim</div>
+      </div>
+
+      <div class="ah-arr">
+        <div class="ah-shape">(B, seq_len, emb_dim)</div>
+        <div class="ah-line">────▶</div>
+        <div class="ah-dtype">float32</div>
+      </div>
+
+      <div class="ah-slim" style="border-color:#0097a7;background:#e0f7fa;color:#006064;"
+        data-tip="RMSNorm (per token): normalises each token embedding by its root-mean-square — x̂ = x / RMS(x) · γ — where γ ∈ ℝ<sup>emb_dim</sup> is a learnable scale vector (emb_dim params). Shape unchanged. Stabilises embedding magnitudes before attention.">
+        <div class="ah-slim-text">σ</div>
+      </div>
+
+    </div>
+
+    <!-- ── CONNECTEUR : bas-centre σ → haut-centre Label Attention ── -->
+    <div style="align-self:stretch;position:relative;height:44px;margin:2px 0 4px 0;">
+      <!-- Γ : descend depuis σ (border-right) puis tourne à gauche (border-bottom), arrondi σ -->
+      <div style="position:absolute;top:0;left:75px;right:98px;height:50%;box-sizing:border-box;
+                  border-right:2px solid #ccc;border-bottom:2px solid #ccc;
+                  border-bottom-right-radius:8px;"></div>
+      <!-- segment vertical bas : de mi-chemin jusqu'au haut de Label Attention -->
+      <div style="position:absolute;top:50%;bottom:0;left:75px;width:2px;background:#ccc;"></div>
+      <!-- flèche vers le bas -->
+      <div style="position:absolute;bottom:-4px;left:71px;width:0;height:0;
+                  border-left:5px solid transparent;
+                  border-right:5px solid transparent;
+                  border-top:8px solid #ccc;"></div>
+      <div style="position:absolute;top:4px;right:397px;font-size:9px;font-weight:700;color:#888;white-space:nowrap;">(B, seq_len, emb_dim) · float32</div>
+    </div>
+
+    <!-- ── LIGNE 2 : Label Attention → σ → Linear(emb→1) → Output ── -->
+    <div style="display:flex;align-items:center;flex-wrap:nowrap;gap:0;">
+
+      <div class="ah-block" style="border-color:#2e7d32;background:#e8f5e9;min-width:148px;"
+        data-tip="<b>Label Attention (cross-attention)</b><br>One learned embedding per class acts as the query; token embeddings are keys and values.<br>① <b>Label embeds</b> — nn.Embedding(n_classes, emb_dim): one trainable vector per class → Q: (B, n_classes, emb_dim)<br>② <b>Project</b> — Q = label_embeds·W<sub>Q</sub>, K = tokens·W<sub>K</sub>, V = tokens·W<sub>V</sub> · head_dim = emb_dim / n_head<br>③ <b>QK-norm</b> — normalise Q and K before the dot product<br>④ <b>Attend</b> — softmax(QK<sup>T</sup> / √head_dim) · V, padding positions masked → (B, n_head, n_classes, head_dim)<br>⑤ <b>Project back</b> — reassemble heads + linear → (B, n_classes, emb_dim)<br>Each class gets its own sentence representation focused on its most relevant tokens. Word order is still ignored — this is the FastText design choice.">
+        <div class="ah-icon" style="color:#2e7d32;font-style:italic;letter-spacing:1px;font-size:10px;">L·Q  K  V</div>
+        <div class="ah-name" style="color:#1b5e20;">Label Attention</div>
+        <div class="ah-params" style="color:#388e3c;">labels → queries<br>tokens → keys/vals</div>
+      </div>
+
+      <div class="ah-arr">
+        <div class="ah-shape">(B, n_classes, emb)</div>
+        <div class="ah-line">────▶</div>
+        <div class="ah-dtype">float32</div>
+      </div>
+
+      <div class="ah-slim" style="border-color:#0097a7;background:#e0f7fa;color:#006064;"
+        data-tip="RMSNorm applied to each of the n_classes label-specific sentence vectors before the classification head. Shape (B, n_classes, emb_dim) unchanged.">
+        <div class="ah-slim-text">σ</div>
+      </div>
+
+      <div class="ah-arr" style="min-width:70px;">
+        <div class="ah-shape">(B, n_cls, emb)</div>
+        <div class="ah-line">────▶</div>
+        <div class="ah-dtype">float32</div>
+      </div>
+
+      <div class="ah-block" style="border-color:#f57c00;background:#fff3e0;"
+        data-tip="Linear(emb_dim → 1) applied independently to each of the n_classes label-specific vectors. W ∈ ℝ<sup>1×emb_dim</sup>. After squeeze: (B, n_classes) logits. Unlike FastText mean pooling where a single W maps all classes at once, here each class score comes from its own dedicated text representation.">
+        <div class="ah-icon" style="color:#e65100;">⊸</div>
+        <div class="ah-name" style="color:#bf360c;">Linear</div>
+        <div class="ah-params" style="color:#f57c00;">emb_dim → 1<br>per class</div>
+      </div>
+
+      <div style="display:flex;align-items:center;flex-shrink:0;gap:14px;margin-left:2px;">
+        <div style="display:flex;flex-direction:column;align-items:center;">
+          <div style="font-size:9.5px;font-weight:700;color:#333;white-space:nowrap;">(B, n_classes)</div>
+          <div style="font-size:13px;color:#bbb;">────▶</div>
+        </div>
+        <div style="font-size:15px;font-weight:700;color:#333;white-space:nowrap;margin-top:10px;">ŷ (logits)</div>
+      </div>
+
+    </div>
+
+  </div><!-- end wrapper -->
+
+  </div><!-- end grand carré -->
+
+</div><!-- end diagram -->
+</div><!-- end fasttext-labatt wrap -->
 
 <!-- Transformer 3-row diagram -->
 <div id="arch-transformer-wrap"
@@ -641,33 +792,38 @@ Four architectures of increasing complexity are compared, combining two model fa
   var _curModel = 'fasttext', _curAgg = 'mean';
 
   function _applySelection(){
-    var arch = (_curModel === 'fasttext') ? 'fasttext' : (_curAgg === 'labatt' ? 'labatt' : 'transformer');
+    var arch;
+    if (_curModel === 'fasttext') {
+      arch = (_curAgg === 'labatt') ? 'fasttext-labatt' : 'fasttext';
+    } else {
+      arch = (_curAgg === 'labatt') ? 'labatt' : 'transformer';
+    }
     var ft   = document.getElementById('arch-fasttext-wrap');
+    var ftla = document.getElementById('arch-fasttext-labatt-wrap');
     var tr   = document.getElementById('arch-transformer-wrap');
     var la   = document.getElementById('arch-labatt-wrap');
     var cont = document.getElementById('arch-container');
     var BASE = 'padding:6px 14px;font-size:13px;font-weight:700;border-radius:20px;cursor:pointer;transition:all .25s;border:2px solid ';
 
-    ft.style.opacity='0'; ft.style.transform='translateX(-50px)'; ft.style.pointerEvents='none';
-    tr.style.opacity='0'; tr.style.transform='translateX(-50px)'; tr.style.pointerEvents='none';
-    la.style.opacity='0'; la.style.transform='translateX(-50px)'; la.style.pointerEvents='none';
+    [ft, ftla, tr, la].forEach(function(w){
+      w.style.opacity='0'; w.style.transform='translateX(-50px)'; w.style.pointerEvents='none';
+    });
 
-    var target = arch==='fasttext' ? ft : arch==='labatt' ? la : tr;
+    var target = arch==='fasttext' ? ft : arch==='fasttext-labatt' ? ftla : arch==='labatt' ? la : tr;
     target.style.opacity='1'; target.style.transform='translateX(0)'; target.style.pointerEvents='auto';
-    cont.style.height = arch==='fasttext' ? '420px' : '680px';
+    cont.style.height = (arch==='fasttext' || arch==='fasttext-labatt') ? '420px' : '680px';
 
     document.getElementById('btn-fasttext').style.cssText  = BASE + (_curModel==='fasttext'  ? '#1565C0;background:#1565C0;color:#fff;' : '#1565C0;background:#fff;color:#1565C0;');
     document.getElementById('btn-attentive').style.cssText = BASE + (_curModel==='attentive' ? '#7b1fa2;background:#7b1fa2;color:#fff;' : '#7b1fa2;background:#fff;color:#7b1fa2;');
 
-    var aggDisabled = _curModel === 'fasttext';
-    document.getElementById('btn-mean').style.cssText   = aggDisabled ? BASE + '#bbb;background:#f5f5f5;color:#bbb;cursor:default;'
-      : BASE + (_curAgg==='mean'   ? '#455a64;background:#455a64;color:#fff;' : '#455a64;background:#fff;color:#455a64;');
-    document.getElementById('btn-labatt').style.cssText = aggDisabled ? BASE + '#bbb;background:#f5f5f5;color:#bbb;cursor:default;'
-      : BASE + (_curAgg==='labatt' ? '#2e7d32;background:#2e7d32;color:#fff;' : '#2e7d32;background:#fff;color:#2e7d32;');
+    document.getElementById('btn-mean').style.cssText   = BASE + (_curAgg==='mean'   ? '#455a64;background:#455a64;color:#fff;' : '#455a64;background:#fff;color:#455a64;');
+    document.getElementById('btn-labatt').style.cssText = BASE + (_curAgg==='labatt' ? '#2e7d32;background:#2e7d32;color:#fff;' : '#2e7d32;background:#fff;color:#2e7d32;');
   }
 
   window.switchModel = function(m){ _curModel = m; _applySelection(); };
-  window.switchAgg   = function(a){ if(_curModel !== 'fasttext'){ _curAgg = a; _applySelection(); } };
+  window.switchAgg   = function(a){ _curAgg = a; _applySelection(); };
+
+  _applySelection();
 
   // ── Pan + Zoom (générique) ────────────────────────────────────────────────
   function makePanZoom(wrapId, diagId){
@@ -700,9 +856,10 @@ Four architectures of increasing complexity are compared, combining two model fa
     });
     wrap.addEventListener('dblclick',function(){ sc=1;tx=0;ty=0;applyT(); });
   }
-  makePanZoom('arch-fasttext-wrap',    'arch-fasttext');
-  makePanZoom('arch-transformer-wrap', 'arch-transformer');
-  makePanZoom('arch-labatt-wrap',      'arch-labatt');
+  makePanZoom('arch-fasttext-wrap',         'arch-fasttext');
+  makePanZoom('arch-fasttext-labatt-wrap',  'arch-fasttext-labatt');
+  makePanZoom('arch-transformer-wrap',      'arch-transformer');
+  makePanZoom('arch-labatt-wrap',           'arch-labatt');
 })();
 </script>
 ```
@@ -713,7 +870,7 @@ All three architectures use a **WordPiece tokenizer** trained on the training da
 
 All experiments are tracked with **MLflow** and run on GPU via **Argo Workflows** on the INSEE datalab infrastructure. Each configuration is trained for up to 40 epochs with early stopping (patience = 5).
 
-The grid search covers 624 configurations in total. For FastText (`n_layers=0`), `n_head` and label attention are not applicable, yielding $4 \times 4 \times 3 = 48$ runs. For transformer architectures (`n_layers` ∈ {1, 2}), the full grid gives $4 \times 2 \times 3 \times 2 \times 4 \times 3 = 576$ runs.
+The grid search covers 672 configurations in total. For FastText (`n_layers=0`), `n_head` is not applicable; without label attention this yields $4 \times 4 \times 3 = 48$ runs, and with label attention another $4 \times 4 \times 3 = 48$ runs, for a FastText subtotal of 96. For transformer architectures (`n_layers` ∈ {1, 2}), the full grid gives $4 \times 2 \times 3 \times 2 \times 4 \times 3 = 576$ runs.
 
 | Hyperparameter | Values | Applies to |
 |---|---|---|
@@ -722,7 +879,7 @@ The grid search covers 624 configurations in total. For FastText (`n_layers=0`),
 | Vocabulary size | 2,000 / 5,000 / 10,000 / 20,000 | All |
 | Learning rate | 0.0001, 0.0005, 0.001 | All |
 | Attention heads (`n_head`) | 2, 4, 8 | `n_layers` ≥ 1 |
-| Label attention (`n_heads_label_attention`) | none, 4 | `n_layers` ≥ 1 |
+| Label attention (`n_heads_label_attention`) | none, 4 | All |
 
 ## Experimental Study
 
@@ -759,6 +916,9 @@ else:
         "metrics.train_time_s":            "train_time_s",
     })
 
+    df = df[~df["tags.mlflow.runName"].str.startswith("perso", na=False)]
+    df = df[df["n_layers"].astype(float) <= 2].copy()
+
     client = mlflow.MlflowClient()
     def get_min_val_loss(run_id):
         history = client.get_metric_history(run_id, "val_loss")
@@ -772,30 +932,27 @@ else:
     df["num_params"] = df["num_params"].astype(int)
 
     def arch_label(row):
+        la = str(row["n_heads_label_attn"]) == "4"
         if row["n_layers"] == 0:
-            return "FastText"
-        elif str(row["n_heads_label_attn"]) == "4":
-            return "Label Attention"
-        else:
-            return f"Transformer (L={row['n_layers']})"
+            return "FastText + Label Attention" if la else "FastText"
+        suffix = " + Label Attention" if la else ""
+        return f"FATE (L={row['n_layers']}){suffix}"
 
     df["architecture"] = df.apply(arch_label, axis=1)
     df.to_csv(CACHE_PATH, index=False)
 ```
 
-### Validation loss vs. number of parameters & stability
+### Capacity, data efficiency & robustness
 
-A key observation is that **`n_head` and `lr` do not affect `num_params`**. In a standard transformer, the total size of the attention matrices is $4 \times d^2$ regardless of how many heads are used, since $d_{\text{head}} = d / n_{\text{head}}$. Similarly, `lr` is a training hyperparameter with no effect on architecture. As a result, for any fixed combination of `(emb_dim, n_layers, vocab_size)`, there are exactly $3 \times 3 = 9$ runs sharing the same `num_params` (3 values of `n_head` × 3 values of `lr`).
-
-This motivates two complementary views on the first tab:
-
-- **Scatter plot**: all 624 runs, showing the full spread of achievable val_loss for a given parameter budget.
-- **Curve plot**: for each `(architecture, emb_dim, vocab_size)` group, take the `min(val_loss)` over `n_head` and `lr`, collapsing the 9 runs into a single best-case point. Sorting by `num_params` then yields one clean curve per architecture, tracing the performance frontier as model capacity grows.
-
-The second tab shows the **distribution of validation loss across all runs** for each architecture. A narrow violin indicates that the architecture is robust to hyperparameter choice, while a wide one signals high sensitivity.
+This section examines three complementary dimensions of the hyperparameter sweep. The first tab plots validation loss against model size, revealing the performance frontier each architecture can reach for a given parameter budget. The second tab studies how performance degrades when only a fraction of the training data is available, probing each architecture's data efficiency. The third tab looks at the spread of validation loss across all runs for a fixed architecture, measuring how sensitive each model is to the choice of hyperparameters.
 
 ::: {.panel-tabset}
 ### Val loss vs. parameters
+
+A key observation is that **`n_head` and `lr` do not affect `num_params`**. In a standard transformer, the total size of the attention matrices is $4 \times d^2$ regardless of how many heads are used, since $d_{\text{head}} = d / n_{\text{head}}$. Similarly, `lr` is a training hyperparameter with no effect on architecture. As a result, for any fixed combination of `(emb_dim, n_layers, vocab_size)`, FATE architectures have exactly $3 \times 3 = 9$ runs sharing the same `num_params` (3 values of `n_head` × 3 values of `lr`), while FastText has only $3$ runs (3 values of `lr`, since `n_head` does not apply). This motivates two complementary views:
+
+- **Scatter plot**: all 672 runs, showing the full spread of achievable val_loss for a given parameter budget.
+- **Curve plot**: for each `(architecture, emb_dim, vocab_size)` group, take the `min(val_loss)` over `n_head` and `lr`, collapsing the 9 (FATE) or 3 (FastText) runs into a single best-case point, tracing the performance frontier as model capacity grows.
 
 ```{python}
 #| label: fig-pareto
@@ -804,10 +961,12 @@ The second tab shows the **distribution of validation loss across all runs** for
 import plotly.graph_objects as go
 
 COLORS = {
-    "FastText":           "#2196F3",
-    "Transformer (L=1)": "#FF9800",
-    "Transformer (L=2)": "#F44336",
-    "Label Attention":   "#4CAF50",
+    "FastText":                          "#2196F3",
+    "FastText + Label Attention":        "#00BCD4",
+    "FATE (L=1)":                        "#FFC107",
+    "FATE (L=1) + Label Attention":      "#FF8C00",
+    "FATE (L=2)":                        "#CC0000",
+    "FATE (L=2) + Label Attention":      "#880E4F",
 }
 
 df_curves = (
@@ -816,18 +975,27 @@ df_curves = (
     .sort_values("num_params")
 )
 
-df_ft      = df[df["architecture"] == "FastText"].groupby(
+ft_archs   = ["FastText", "FastText + Label Attention"]
+df_ft      = df[df["architecture"].isin(ft_archs)].groupby(
     ["architecture", "emb_dim", "vocab_size", "lr", "num_params"], as_index=False
 )["min_val_loss"].min()
-df_scatter = pd.concat([df_ft, df[df["architecture"] != "FastText"]], ignore_index=True)
+df_scatter = pd.concat([df_ft, df[~df["architecture"].isin(ft_archs)]], ignore_index=True)
 
 fig = go.Figure()
+
+for arch in COLORS:
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode="markers",
+        name=arch, legendgroup=arch, showlegend=True,
+        marker=dict(color=COLORS[arch], size=8, opacity=1.0),
+    ))
 
 for arch, group in df_scatter.groupby("architecture"):
     fig.add_trace(go.Scatter(
         x=group["num_params"], y=group["min_val_loss"],
         mode="markers",
-        name=arch, legendgroup=arch,
+        name=arch, legendgroup=arch, showlegend=False,
         marker=dict(color=COLORS.get(arch, "grey"), size=5, opacity=0.3),
         hovertemplate="params=%{x:,}<br>val_loss=%{y:.4f}<extra>" + arch + "</extra>",
     ))
@@ -853,6 +1021,8 @@ fig.show()
 ```
 
 ### Effect of training set size
+
+Each curve shows the best validation loss (over `n_head` and `lr`) for a given architecture and parameter count, repeated across fractions of the training set. This reveals how quickly each architecture saturates with data and how sensitive it is to data scarcity.
 
 ```{python}
 #| label: fig-train-eff
@@ -887,11 +1057,11 @@ else:
     df_eff["train_fraction"] = df_eff["train_fraction"].astype(float)
 
     def _arch_eff(row):
+        la = str(row["n_heads_label_attn"]) == "4"
         if row["n_layers"] == 0:
-            return "FastText"
-        elif str(row["n_heads_label_attn"]) == "4":
-            return "Label Attention"
-        return f"Transformer (L={int(row['n_layers'])})"
+            return "FastText + Label Attention" if la else "FastText"
+        suffix = " + Label Attention" if la else ""
+        return f"FATE (L={int(row['n_layers'])}){suffix}"
     df_eff["architecture"] = df_eff.apply(_arch_eff, axis=1)
     df_eff.to_csv(CACHE_PATH_EFF, index=False)
 
@@ -962,11 +1132,15 @@ fig.show()
 
 ### Stability
 
+The violin plot shows the **distribution of validation loss across all runs** for each architecture. A narrow violin indicates that the architecture is robust to hyperparameter choice, while a wide one signals high sensitivity.
+
 ```{python}
 #| label: fig-violin
 #| fig-cap: "Distribution of validation loss by architecture"
 
-arch_order = ["FastText", "Transformer (L=1)", "Transformer (L=2)", "Label Attention"]
+arch_order = ["FastText", "FastText + Label Attention",
+              "FATE (L=1)", "FATE (L=1) + Label Attention",
+              "FATE (L=2)", "FATE (L=2) + Label Attention"]
 arch_order = [a for a in arch_order if a in df["architecture"].unique()]
 
 fig = go.Figure()
@@ -1010,13 +1184,15 @@ fig.show()
 
 :::
 
-**Val loss vs. parameters.** FastText plateaus around 0.94 regardless of model size, showing that averaging embeddings without any attention mechanism hits a hard performance ceiling. The two transformer variants improve steadily with capacity: Transformer (L=2) reaches the lowest validation loss (~0.87) and remains the best architecture across all parameter budgets. Transformer (L=1) sits in between, around 0.89–0.90. Label Attention is noisier — its curve oscillates more than the others, suggesting higher sensitivity to the specific hyperparameter combination.
+**Val loss vs. parameters.** Both FastText variants plateau regardless of model size — FastText around 0.93–0.94 and FastText + Label Attention slightly lower at ~0.92 — confirming that the mean-pooling bottleneck sets a hard performance ceiling that extra parameters cannot overcome. FATE architectures, by contrast, improve steadily with capacity: FATE (L=2) reaches the lowest validation loss (~0.856) and dominates across all parameter budgets, closely followed by FATE (L=2) + Label Attention. FATE (L=1) sits in between at ~0.88–0.90. Adding label attention to FATE does not systematically change the frontier, suggesting that the transformer blocks already capture most of the relevant context.
 
-**Effect of training set size.** Each dot represents the best validation loss achieved by a given architecture at a given model size, trained on a fraction of the full training set. Dot size and opacity both increase with the fraction used (10 % → 100 %). Across all architectures, moving from 10 % to 100 % of the training data consistently lowers validation loss, confirming that data volume matters even at these model scales. The gap between fractions is largest for the most capable architectures (Transformer L=2), suggesting that bigger models benefit more from additional data.
+**Effect of training set size.** TODO
 
-**Stability.** FastText is by far the most stable architecture: its violin is narrow and concentrated around 0.94–0.95, meaning the choice of hyperparameters has little impact on the outcome. Transformer (L=2) achieves the best median performance but at the cost of a wide distribution (~0.86–0.91), indicating that some configurations work much better than others. Label Attention shows a similar spread to Transformer (L=2) but with a slightly higher median, making it both sensitive and less performant on average.
+**Stability.** The two FastText variants are by far the most stable: their violins are narrow and tightly concentrated (FastText ~0.94, FastText + Label Attention ~0.93), meaning hyperparameter choice has almost no impact on the outcome. FATE (L=1) and FATE (L=1) + Label Attention show a moderate spread centered around 0.90, while FATE (L=2) and FATE (L=2) + Label Attention exhibit the widest distributions (~0.86–0.92), with their label-attention counterparts reaching the lowest tails (~0.84). The trade-off is clear: the most capable architectures achieve the best performance but require more careful tuning.
 
 ### Effect of vocabulary size and embedding dimension
+
+The previous analysis treats model capacity (number of parameters) as a single axis, but two hyperparameters drive that capacity in very different ways: **vocabulary size** controls the size of the embedding look-up table - the dominant parameter cost for all architectures - while **embedding dimension** determines the width of every layer. Varying them independently allows us to disentangle their respective contributions to performance and identify practical sweet spots.
 
 ::: {.panel-tabset}
 ### Vocabulary size
@@ -1040,18 +1216,26 @@ df_emb_mean = (
 )
 
 vocab_offsets = {
-    "FastText":           0,
-    "Transformer (L=1)": -250,
-    "Transformer (L=2)": +250,
-    "Label Attention":   0,
+    "FastText":                          -500,
+    "FastText + Label Attention":        -300,
+    "FATE (L=1)":                        -100,
+    "FATE (L=1) + Label Attention":      +100,
+    "FATE (L=2)":                        +300,
+    "FATE (L=2) + Label Attention":      +500,
 }
 
 fig = go.Figure()
+for arch in COLORS:
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        name=arch, legendgroup=arch, showlegend=True,
+        marker=dict(color=COLORS[arch], size=8, opacity=1.0),
+    ))
 for arch, group in df.groupby("architecture"):
-    offset = vocab_offsets[arch]
+    offset = vocab_offsets.get(arch, 0)
     fig.add_trace(go.Scatter(
         x=group["vocab_size"] + offset, y=group["min_val_loss"],
-        mode="markers", name=arch, legendgroup=arch,
+        mode="markers", name=arch, legendgroup=arch, showlegend=False,
         marker=dict(color=COLORS.get(arch, "grey"), size=5, opacity=0.3),
         hovertemplate="vocab=%{customdata:,}<br>val_loss=%{y:.4f}<extra>" + arch + "</extra>",
         customdata=group["vocab_size"],
@@ -1068,7 +1252,8 @@ for arch, group in df_vocab_mean.groupby("architecture"):
 fig.update_layout(
     xaxis_title="Vocabulary size", yaxis_title="Validation loss",
     xaxis=dict(tickvals=vocab_vals, ticktext=[f"{v:,}" for v in vocab_vals]),
-    legend_title="Architecture", height=430, width=750, margin=dict(l=60, r=20),
+    legend=dict(title=dict(text="Architecture<br><i style='font-size:11px;font-weight:normal'>line = mean</i>")),
+    height=430, width=740, margin=dict(l=60, r=20),
 )
 fig.show()
 ```
@@ -1080,18 +1265,26 @@ fig.show()
 #| fig-cap: "Effect of embedding dimension on validation loss"
 
 emb_offsets = {
-    "FastText":           0,
-    "Transformer (L=1)": -6,
-    "Transformer (L=2)": +6,
-    "Label Attention":   0,
+    "FastText":                          -15,
+    "FastText + Label Attention":        -9,
+    "FATE (L=1)":                        -3,
+    "FATE (L=1) + Label Attention":      +3,
+    "FATE (L=2)":                        +9,
+    "FATE (L=2) + Label Attention":      +15,
 }
 
 fig = go.Figure()
+for arch in COLORS:
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        name=arch, legendgroup=arch, showlegend=True,
+        marker=dict(color=COLORS[arch], size=8, opacity=1.0),
+    ))
 for arch, group in df.groupby("architecture"):
     offset = emb_offsets[arch]
     fig.add_trace(go.Scatter(
         x=group["emb_dim"] + offset, y=group["min_val_loss"],
-        mode="markers", name=arch, legendgroup=arch,
+        mode="markers", name=arch, legendgroup=arch, showlegend=False,
         marker=dict(color=COLORS.get(arch, "grey"), size=5, opacity=0.3),
         hovertemplate="emb_dim=%{customdata}<br>val_loss=%{y:.4f}<extra>" + arch + "</extra>",
         customdata=group["emb_dim"],
@@ -1108,16 +1301,17 @@ for arch, group in df_emb_mean.groupby("architecture"):
 fig.update_layout(
     xaxis_title="Embedding dimension", yaxis_title="Validation loss",
     xaxis=dict(tickvals=emb_vals, ticktext=[str(v) for v in emb_vals]),
-    legend_title="Architecture", height=430, width=750, margin=dict(l=60, r=20),
+    legend=dict(title=dict(text="Architecture<br><i style='font-size:11px;font-weight:normal'>line = mean</i>")),
+    height=430, width=740, margin=dict(l=60, r=20),
 )
 fig.show()
 ```
 
 :::
 
-**Vocabulary size.** All architectures benefit modestly from a larger vocabulary, but with diminishing returns after 10,000 tokens. FastText remains largely unaffected, barely improving from 0.952 at 2k to 0.940 at 20k. Transformer-based models show a clearer gain up to 10k, after which the curves flatten — suggesting that most of the useful vocabulary is captured within that range for this dataset.
+**Vocabulary size.** The main gains occur between 2,000 and 5,000 tokens; beyond that, all curves flatten. FastText and FastText + Label Attention are nearly insensitive across the full range (~0.950→0.940 and ~0.940→0.930 respectively). FATE architectures show a more noticeable drop from 2k to 5k, after which performance stabilises ; FATE (L=1) variants around 0.895–0.900 and FATE (L=2) variants around 0.880. This suggests that a vocabulary of 5,000 tokens already captures most of the useful subword coverage for this dataset.
 
-**Embedding dimension.** The picture is similar: performance improves as embedding size grows from 64 to 256, but gains stall or even reverse at 512. Transformer (L=2) peaks at 256 (~0.873) then slightly degrades, suggesting that very large embeddings bring no benefit and may introduce optimization difficulties. FastText is again nearly insensitive to this parameter. For transformer architectures, **256 appears to be the sweet spot**.
+**Embedding dimension.** FastText variants are insensitive throughout, their curves remaining essentially flat from 64 to 512. FATE (L=1) architectures improve from 64 to 128–256 then plateau, with no clear degradation at 512. FATE (L=2) shows the sharpest pattern: validation loss decreases up to 256 and slightly increases at 512, making **256 the clear sweet spot** for deeper transformer architectures. Larger embeddings add parameters without improving and can marginally hurt the most expressive models.
 
 ### Effect of number of attention heads
 
@@ -1135,17 +1329,25 @@ df_head_min = (
 )
 
 head_offsets = {
-    "Transformer (L=1)": -0.075,
-    "Transformer (L=2)": +0.075,
-    "Label Attention":   0,
+    "FATE (L=1)":                        -0.15,
+    "FATE (L=1) + Label Attention":      -0.05,
+    "FATE (L=2)":                        +0.05,
+    "FATE (L=2) + Label Attention":      +0.15,
 }
 
+fate_archs = [a for a in COLORS if a.startswith("FATE")]
 fig = go.Figure()
+for arch in fate_archs:
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        name=arch, legendgroup=arch, showlegend=True,
+        marker=dict(color=COLORS[arch], size=8, opacity=1.0),
+    ))
 for arch, group in df_attn.groupby("architecture"):
     offset = head_offsets.get(arch, 0)
     fig.add_trace(go.Scatter(
         x=group["n_head"] + offset, y=group["min_val_loss"],
-        mode="markers", name=arch, legendgroup=arch,
+        mode="markers", name=arch, legendgroup=arch, showlegend=False,
         marker=dict(color=COLORS.get(arch, "grey"), size=5, opacity=0.3),
         hovertemplate="n_head=%{customdata}<br>val_loss=%{y:.4f}<extra>" + arch + "</extra>",
         customdata=group["n_head"],
@@ -1162,12 +1364,13 @@ for arch, group in df_head_min.groupby("architecture"):
 fig.update_layout(
     xaxis_title="Number of attention heads", yaxis_title="Validation loss",
     xaxis=dict(tickvals=head_vals, ticktext=[str(v) for v in head_vals]),
-    legend_title="Architecture", height=420,
+    legend=dict(title=dict(text="Architecture<br><i style='font-size:11px;font-weight:normal'>line = mean</i>")),
+    height=420,
 )
 fig.show()
 ```
 
-The number of attention heads has virtually no effect on validation loss across all three architectures. The mean curves are essentially flat from 2 to 8 heads, and the ranking between architectures remains unchanged. This is consistent with the theoretical expectation: as the total attention matrix size is fixed at $4 \times d^2$, splitting it into more heads simply redistributes capacity without adding parameters.je ne
+The number of attention heads has virtually no effect on validation loss across all four FATE variants. All mean curves are essentially flat from 2 to 8 heads, with FATE (L=2) showing a marginal dip at 4 heads before recovering at 8 but the amplitude is negligible. The ranking between architectures is fully preserved regardless of head count. This is consistent with the theoretical expectation: the total attention matrix size is fixed at $4 \times d^2$, so increasing the number of heads simply redistributes the same capacity into smaller per-head subspaces without adding parameters.
 
 ### Training time
 
@@ -1176,10 +1379,16 @@ The number of attention heads has virtually no effect on validation loss across 
 #| fig-cap: "Validation loss vs. training time"
 
 fig = go.Figure()
+for arch in COLORS:
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        name=arch, legendgroup=arch, showlegend=True,
+        marker=dict(color=COLORS[arch], size=8, opacity=1.0),
+    ))
 for arch, group in df.groupby("architecture"):
     fig.add_trace(go.Scatter(
         x=group["train_time_s"], y=group["min_val_loss"],
-        mode="markers", name=arch, legendgroup=arch,
+        mode="markers", name=arch, legendgroup=arch, showlegend=False,
         marker=dict(color=COLORS.get(arch, "grey"), size=6, opacity=0.5),
         hovertemplate="time=%{x:.0f}s<br>val_loss=%{y:.4f}<extra>" + arch + "</extra>",
     ))
@@ -1190,6 +1399,8 @@ fig.update_layout(
 fig.show()
 ```
 
+The graph shows the typical training time ranges per architecture, but no clear correlation between training time and validation loss within a given family. FastText variants cluster on the left (under 1,000 s) at high loss (~0.93–0.96); FATE (L=1) variants are scattered across 500–2,000 s with losses in the 0.88–0.92 range; FATE (L=2) architectures span the widest range (~500–3,500 s) and achieve the best losses (~0.86–0.90). Within each family, a longer training run does not reliably predict a lower validation loss ; the spread in both axes is driven by hyperparameter configurations (embedding size, vocabulary size, number of heads) rather than by a causal time–performance relationship.
+
 ### Interaction: embedding dimension × vocabulary size
 
 ```{python}
@@ -1198,7 +1409,7 @@ fig.show()
 
 from plotly.subplots import make_subplots
 
-arch_order = ["FastText", "Transformer (L=1)", "Transformer (L=2)", "Label Attention"]
+arch_order = list(COLORS.keys())
 arch_order = [a for a in arch_order if a in df["architecture"].unique()]
 emb_vals   = sorted(df["emb_dim"].unique())
 vocab_vals  = sorted(df["vocab_size"].unique())
@@ -1206,10 +1417,11 @@ vocab_vals  = sorted(df["vocab_size"].unique())
 vmin = df.groupby(["architecture", "emb_dim", "vocab_size"])["min_val_loss"].mean().min()
 vmax = df.groupby(["architecture", "emb_dim", "vocab_size"])["min_val_loss"].mean().max()
 
-fig = make_subplots(rows=2, cols=2, subplot_titles=arch_order)
+fig = make_subplots(rows=2, cols=3, subplot_titles=arch_order,
+                    horizontal_spacing=0.07, vertical_spacing=0.24)
 
 for idx, arch in enumerate(arch_order):
-    row, col = divmod(idx, 2)
+    row, col = divmod(idx, 3)
     pivot = (
         df[df["architecture"] == arch]
         .groupby(["emb_dim", "vocab_size"])["min_val_loss"].mean()
@@ -1224,16 +1436,19 @@ for idx, arch in enumerate(arch_order):
         zmin=vmin, zmax=vmax,
         text=[[f"{v:.3f}" if not np.isnan(v) else "" for v in row_] for row_ in pivot.values],
         texttemplate="%{text}",
+        textfont=dict(color="#555555") if arch.startswith("FATE") else dict(color="#e8e8e8"),
         showscale=(idx == 0),
-        colorbar=dict(title="Mean val loss", len=0.45, y=0.78) if idx == 0 else None,
+        colorbar=dict(title="Mean val loss", orientation="h", x=0.5, xanchor="center", y=-0.15, yanchor="top", len=0.6, thickness=18, title_side="bottom") if idx == 0 else None,
         hovertemplate="vocab=%{x}<br>emb_dim=%{y}<br>val_loss=%{z:.4f}<extra>" + arch + "</extra>",
     ), row=row + 1, col=col + 1)
-    fig.update_xaxes(title_text="Vocabulary size", row=row + 1, col=col + 1)
-    fig.update_yaxes(title_text="Embedding dim", row=row + 1, col=col + 1)
+    fig.update_xaxes(title_text="Vocabulary size" if col == 1 else "", row=row + 1, col=col + 1)
+    fig.update_yaxes(title_text="Embedding dim" if col == 0 else "", row=row + 1, col=col + 1)
 
-fig.update_layout(height=600)
+fig.update_layout(height=640, width=750, margin=dict(l=40, r=20, t=40, b=70))
 fig.show()
 ```
+
+The heatmaps confirm that the two axes contribute **largely independently**: the vocabulary-size effect (dark left-to-right gradient easing off after 5k) and the embedding-dimension effect (darkest row around 256) combine additively rather than interacting strongly. **FastText** variants display near-uniform tiles across all cells, reinforcing that neither axis moves the needle for bag-of-words models. **FATE (L=1)** shows mild but consistent improvement as both dimensions grow, without a pronounced sweet spot. **FATE (L=2)** exhibits the clearest structure: the (emb_dim=256, vocab_size=5 000–10 000) region concentrates the best mean validation loss, while the (64, 2 000) corner is noticeably weaker. Adding label attention does not shift the optimal (emb_dim, vocab_size) corner — the same (256, 5 000) cell dominates — but it slightly deepens the darker region, suggesting a modest complementary benefit once the model already has sufficient capacity on both axes.
 
 ### Prediction analysis
 
@@ -1244,10 +1459,10 @@ import numpy as np, tempfile, glob as glob_mod
 
 STAR_LABELS  = ["1★", "2★", "3★", "4★", "5★"]
 ARCH_SLUGS   = {
-    "FastText":           "fasttext",
-    "Transformer (L=1)": "transL1",
-    "Transformer (L=2)": "transL2",
-    "Label Attention":   "labatt",
+    "FastText":                          "fasttext",
+    "FATE (L=1)":                        "transL1",
+    "FATE (L=2)":                        "transL2",
+    "FATE (L=2) + Label Attention":      "labatt",
 }
 
 preds_by_arch = {}   # arch -> {"y_test": ..., "y_pred": ..., "X_test": ...}
@@ -1598,8 +1813,9 @@ df_ex["any_wrong"] = (df_ex[ARCHS_AVAIL].values != df_ex[["true"]].values).any(a
 pool   = df_ex[df_ex["disagree"] & df_ex["any_wrong"]]
 sample = pool.sample(12, random_state=42).reset_index(drop=True)
 
-ARCH_SHORT = {"FastText": "FastText", "Transformer (L=1)": "Trans (L=1)",
-              "Transformer (L=2)": "Trans (L=2)", "Label Attention": "Label Att"}
+ARCH_SHORT = {"FastText": "FastText", "FastText + Label Attention": "FT+LA",
+              "FATE (L=1)": "FATE (L=1)", "FATE (L=1) + Label Attention": "FATE (L=1)+LA",
+              "FATE (L=2)": "FATE (L=2)", "FATE (L=2) + Label Attention": "FATE (L=2)+LA"}
 
 examples = [
     {"true": int(r["true"]), "text": str(r["text"]),
