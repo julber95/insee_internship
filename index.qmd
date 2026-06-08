@@ -668,7 +668,7 @@ Four architectures of increasing complexity are compared, combining two model fa
         <div class="ah-line">────▶</div>
         <div class="ah-dtype">float32</div>
       </div>
-      <div class="ah-block" style="border-color:#2e7d32;background:#e8f5e9;min-width:148px;"
+      <div class="ah-block" style="border-color:#2e7d32;background:#e8f5e9;min-wipdth:148px;"
         data-tip="<b>Label Attention (cross-attention)</b><br>One learned embedding per class acts as the query; token embeddings are keys and values.<br>① <b>Label embeds</b> — nn.Embedding(n_classes, emb_dim): one trainable vector per class → Q: (B, n_classes, emb_dim)<br>② <b>Project</b> — Q = label_embeds·W<sub>Q</sub>, K = tokens·W<sub>K</sub>, V = tokens·W<sub>V</sub> · head_dim = emb_dim / n_head<br>③ <b>QK-norm</b> — normalise Q and K before the dot product<br>④ <b>Attend</b> — softmax(QK<sup>T</sup> / √head_dim) · V, padding positions masked → (B, n_head, n_classes, head_dim)<br>⑤ <b>Project back</b> — reassemble heads + linear → (B, n_classes, emb_dim)<br>Each class gets its own sentence representation focused on its most relevant tokens.">
         <div class="ah-icon" style="color:#2e7d32;font-style:italic;letter-spacing:1px;font-size:10px;">L·Q  K  V</div>
         <div class="ah-name" style="color:#1b5e20;">Label Attention</div>
@@ -1455,45 +1455,53 @@ The heatmaps confirm that the two axes contribute **largely independently**: the
 ```{python}
 #| label: load-predictions-amazon
 
-import numpy as np, tempfile, glob as glob_mod
+import numpy as np, urllib.request
 
 STAR_LABELS  = ["1★", "2★", "3★", "4★", "5★"]
-ARCH_SLUGS   = {
-    "FastText":                          "fasttext",
-    "FATE (L=1)":                        "transL1",
-    "FATE (L=2)":                        "transL2",
-    "FATE (L=2) + Label Attention":      "labatt",
+
+# Public MinIO links — no MLflow credentials needed, so the report renders for anyone
+PRED_BUCKET  = "https://minio.lab.sspcloud.fr/projet-text-classif/predictions"
+ARCH_FILES   = {
+    "FastText":                          "amz_fasttext_preds.npz",
+    "FastText + Label Attention":        "amz_fasttext_labatt_preds.npz",
+    "FATE (L=1)":                        "amz_fateL1_preds.npz",
+    "FATE (L=1) + Label Attention":      "amz_fateL1_labatt_preds.npz",
+    "FATE (L=2)":                        "amz_fateL2_preds.npz",
+    "FATE (L=2) + Label Attention":      "amz_fateL2_labatt_preds.npz",
 }
 
 preds_by_arch = {}   # arch -> {"y_test": ..., "y_pred": ..., "X_test": ...}
 
-for arch, slug in ARCH_SLUGS.items():
+for arch, fname in ARCH_FILES.items():
     if arch not in df["architecture"].values:
         continue
-    cache = Path(f"benchmark/results/predictions_amazon_{slug}.npz")
-    if cache.exists():
-        d = np.load(cache, allow_pickle=True)
-        preds_by_arch[arch] = {
-            "y_test": d["y_test"].astype(int),
-            "y_pred": d["y_pred"].astype(int),
-            "X_test": d["X_test"],
-        }
-    else:
-        run_id = df[df["architecture"] == arch].loc[
-            df[df["architecture"] == arch]["min_val_loss"].idxmin(), "run_id"
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            local_dir = mlflow.MlflowClient().download_artifacts(run_id, "predictions", dst_path=tmp)
-            npz_file  = glob_mod.glob(f"{local_dir}/*.npz")[0]
-            d         = np.load(npz_file, allow_pickle=True)
-            preds_by_arch[arch] = {
-                "y_test": d["y_test"].astype(int),
-                "y_pred": d["y_pred"].astype(int),
-                "X_test": d["X_test"],
-            }
-        np.savez(cache, **preds_by_arch[arch])
+    cache = Path(f"benchmark/results/{fname}")
+    if not cache.exists():
+        urllib.request.urlretrieve(f"{PRED_BUCKET}/{fname}", cache)
+    d = np.load(cache, allow_pickle=True)
+    preds_by_arch[arch] = {
+        "y_test": d["y_test"].astype(int),
+        "y_pred": d["y_pred"].astype(int),
+        "X_test": d["X_test"],
+    }
 
 ARCHS_AVAIL = list(preds_by_arch.keys())
+
+def arch_dropdown(args_fn, y=1.16):
+    """Single centered dropdown listing all architectures. A row of buttons would either
+    overflow (long 'FATE (...) + Label Attention' labels) or, split across rows, end up
+    with two independently-highlighted 'active' buttons at once — a dropdown has exactly
+    one current selection and stays compact regardless of label length."""
+    return [dict(
+        type="dropdown",
+        buttons=[dict(label=arch, method="update", args=[args_fn(i)])
+                 for i, arch in enumerate(ARCHS_AVAIL)],
+        x=0.5, xanchor="center", y=y, yanchor="top",
+        showactive=True,
+        bgcolor="#f0f0f0", bordercolor="#cccccc", borderwidth=1,
+        font=dict(size=12, color="#222"),
+        pad=dict(l=10, r=10, t=4, b=4),
+    )]
 ```
 
 ::: {.panel-tabset}
@@ -1514,7 +1522,7 @@ for i, arch in enumerate(ARCHS_AVAIL):
     fig.add_trace(go.Heatmap(
         z=cm,
         x=STAR_LABELS, y=STAR_LABELS,
-        colorscale="Blues", zmin=0, zmax=1,
+        colorscale="Viridis", zmin=0, zmax=1,
         text=[[f"{v:.2f}" for v in row_] for row_ in cm],
         texttemplate="%{text}",
         colorbar=dict(title="Fraction"),
@@ -1527,25 +1535,9 @@ fig.update_layout(
     yaxis=dict(autorange="reversed"),
     height=500, width=540,
     margin=dict(t=125, r=20),
-    updatemenus=[dict(
-        type="buttons",
-        direction="right",
-        buttons=[
-            dict(label=arch, method="update",
-                 args=[{"visible": [j == i for j in range(n_archs)]}])
-            for i, arch in enumerate(ARCHS_AVAIL)
-        ],
-        x=0, xanchor="left",
-        y=1.18, yanchor="top",
-        showactive=True,
-        bgcolor="#f0f0f0",
-        bordercolor="#cccccc",
-        borderwidth=1,
-        font=dict(size=12, color="#222"),
-        pad=dict(l=4, r=4, t=4, b=4),
-    )],
+    updatemenus=arch_dropdown(lambda i: {"visible": [j == i for j in range(n_archs)]}),
     annotations=[dict(
-        text="<b>Choose the model:</b>", x=0, xanchor="left", xref="paper",
+        text="<b>Choose the model:</b>", x=0.5, xanchor="center", xref="paper",
         y=1.21, yanchor="bottom", yref="paper",
         showarrow=False, font=dict(size=12, color="#555"),
     )],
@@ -1672,122 +1664,75 @@ fig2.update_layout(
     legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.18, yanchor="top", itemclick=False, itemdoubleclick=False),
     height=480, margin=dict(t=90, b=80),
     annotations=[dict(
-        text="<b>Choose the model:</b>", x=0, xanchor="left", xref="paper",
+        text="<b>Choose the model:</b>", x=0.5, xanchor="center", xref="paper",
         y=1.22, yanchor="bottom", yref="paper",
         showarrow=False, font=dict(size=12, color="#555"),
     )],
-    updatemenus=[dict(
-        type="buttons", direction="right",
-        buttons=[
-            dict(label=arch, method="update", args=[{"visible": make_vis2(i)}])
-            for i, arch in enumerate(ARCHS_AVAIL)
-        ],
-        x=0, xanchor="left", y=1.18, yanchor="top",
-        showactive=True, bgcolor="#f0f0f0",
-        bordercolor="#cccccc", borderwidth=1,
-        font=dict(size=12, color="#222"),
-        pad=dict(l=4, r=4, t=4, b=4),
-    )],
+    updatemenus=arch_dropdown(lambda i: {"visible": make_vis2(i)}),
 )
 fig2.show()
 ```
 
-### Error overlap
+### Model agreement
+
+Rather than asking *which* model is wrong, this view asks a deeper question: when the six architectures disagree, is that because some of them are simply weaker — or because the example itself is ambiguous (e.g. a "mixed" review that a human would also struggle to rate)? For each test example, we count how many distinct star ratings the six models collectively predict, then look at (a) how often the **majority vote** is actually correct at each agreement level, and (b) which true ratings dominate the disagreement zone.
 
 ```{python}
-#| label: fig-error-overlap-jaccard
-#| fig-cap: "Pairwise error overlap between architectures (Jaccard index)"
+#| label: fig-agreement-correctness
+#| fig-cap: "Model agreement vs. correctness — does disagreement signal a weak model or an inherently ambiguous example?"
 
-error_sets = {
-    arch: set(np.where(preds_by_arch[arch]["y_pred"] != preds_by_arch[arch]["y_test"])[0])
-    for arch in ARCHS_AVAIL
-}
-n_total = len(preds_by_arch[ARCHS_AVAIL[0]]["y_test"])
-n = len(ARCHS_AVAIL)
+preds_matrix = np.array([preds_by_arch[a]["y_pred"] for a in ARCHS_AVAIL])
+y_true       = preds_by_arch[ARCHS_AVAIL[0]]["y_test"]
+n_test       = preds_matrix.shape[1]
 
-jaccard = np.zeros((n, n))
-overlap = np.zeros((n, n), dtype=int)
-for i, a1 in enumerate(ARCHS_AVAIL):
-    for j, a2 in enumerate(ARCHS_AVAIL):
-        inter = len(error_sets[a1] & error_sets[a2])
-        union = len(error_sets[a1] | error_sets[a2])
-        jaccard[i, j] = inter / union if union > 0 else 1.0
-        overlap[i, j] = inter
+n_distinct  = np.array([len(set(preds_matrix[:, i])) for i in range(n_test)])
+maj_pred    = np.array([np.bincount(preds_matrix[:, i], minlength=5).argmax() for i in range(n_test)])
+maj_correct = (maj_pred == y_true)
 
-fig = go.Figure(go.Heatmap(
-    z=jaccard,
-    x=ARCHS_AVAIL, y=ARCHS_AVAIL,
-    colorscale="Blues", zmin=0, zmax=1,
-    text=[[f"{jaccard[i,j]:.2f}<br>({overlap[i,j]:,})" for j in range(n)] for i in range(n)],
-    texttemplate="%{text}",
-    colorbar=dict(title="Jaccard"),
-    hovertemplate="<b>%{y}</b> ∩ <b>%{x}</b><br>Jaccard: %{z:.2f}<br>Shared errors: %{customdata:,}<extra></extra>",
-    customdata=overlap,
-))
-fig.update_layout(
-    yaxis=dict(autorange="reversed"),
-    height=380,
-    margin=dict(t=20),
+levels  = sorted(np.unique(n_distinct).tolist())
+xlabels = ["All 6 agree" if k == 1 else f"{k} distinct labels" for k in levels]
+
+share = [(n_distinct == k).mean() * 100 for k in levels]
+acc   = [maj_correct[n_distinct == k].mean() * 100 for k in levels]
+
+STAR_COLORS = ["#E53935", "#FB8C00", "#FDD835", "#7CB342", "#43A047"]
+comp = np.zeros((len(levels), 5))
+for li, k in enumerate(levels):
+    counts = np.bincount(y_true[n_distinct == k], minlength=5)
+    comp[li] = counts / counts.sum() * 100
+
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["Share of test set & majority-vote accuracy", "Composition of true ratings"],
 )
-fig.show()
-```
+fig.add_trace(go.Bar(
+    x=xlabels, y=share, name="% of test set", marker_color="#90A4AE",
+    hovertemplate="%{x}<br>%{y:.1f}% of test set<extra></extra>",
+), row=1, col=1)
+fig.add_trace(go.Scatter(
+    x=xlabels, y=acc, name="Majority-vote accuracy", mode="lines+markers",
+    marker=dict(size=10, color="#C62828"), line=dict(width=3, color="#C62828"),
+    hovertemplate="%{x}<br>accuracy: %{y:.1f}%<extra></extra>",
+), row=1, col=1)
 
-### Error patterns
-
-```{python}
-#| label: fig-delta-confusion
-#| fig-cap: "Δ confusion matrix vs FastText — green = improvement, red = regression"
-
-from plotly.subplots import make_subplots as _make_subplots
-
-if "FastText" in preds_by_arch:
-    cm_ref   = confusion_matrix(preds_by_arch["FastText"]["y_test"],
-                                preds_by_arch["FastText"]["y_pred"], normalize="true")
-    cmp_archs = [a for a in ARCHS_AVAIL if a != "FastText"]
-    fig = _make_subplots(rows=1, cols=len(cmp_archs), subplot_titles=cmp_archs)
-
-    for idx, arch in enumerate(cmp_archs):
-        cm    = confusion_matrix(preds_by_arch[arch]["y_test"],
-                                 preds_by_arch[arch]["y_pred"], normalize="true")
-        delta = cm - cm_ref
-        fig.add_trace(go.Heatmap(
-            z=delta, x=STAR_LABELS, y=STAR_LABELS,
-            colorscale="RdYlGn", zmid=0,
-            text=[[f"{v:+.2f}" for v in row_] for row_ in delta],
-            texttemplate="%{text}",
-            showscale=(idx == 0),
-            colorbar=dict(title="Δ", len=0.8) if idx == 0 else None,
-            hovertemplate="Pred=%{x}<br>True=%{y}<br>Δ=%{z:+.3f}<extra>" + arch + "</extra>",
-        ), row=1, col=idx + 1)
-        fig.update_xaxes(title_text="Predicted",                  row=1, col=idx + 1)
-        fig.update_yaxes(title_text="True" if idx == 0 else "",
-                         autorange="reversed",                     row=1, col=idx + 1)
-
-    fig.update_layout(height=430)
-    fig.show()
-```
-
-```{python}
-#| label: fig-per-class-accuracy
-#| fig-cap: "Per-class recall by architecture"
-
-fig = go.Figure()
-for arch in ARCHS_AVAIL:
-    d   = preds_by_arch[arch]
-    cm  = confusion_matrix(d["y_test"], d["y_pred"], normalize="true")
+for ci, star in enumerate(STAR_LABELS):
     fig.add_trace(go.Bar(
-        x=STAR_LABELS, y=np.diag(cm),
-        name=arch, marker_color=COLORS.get(arch, "grey"),
-        hovertemplate=f"<b>{arch}</b><br>%{{x}}: %{{y:.1%}}<extra></extra>",
-    ))
+        x=xlabels, y=comp[:, ci], name=star, marker_color=STAR_COLORS[ci],
+        hovertemplate=f"<b>{star}</b><br>%{{x}}: %{{y:.1f}}% of group<extra></extra>",
+    ), row=1, col=2)
+
+fig.update_yaxes(title_text="%", range=[0, 100], row=1, col=1)
+fig.update_yaxes(title_text="% of group", range=[0, 100], row=1, col=2)
+fig.update_xaxes(tickangle=-15)
 fig.update_layout(
-    barmode="group",
-    yaxis_title="Recall", yaxis_tickformat=".0%",
-    legend_title="Architecture",
-    template="simple_white", height=400,
+    barmode="stack", template="simple_white", height=440,
+    legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.32, yanchor="top"),
+    margin=dict(t=60, b=120),
 )
 fig.show()
 ```
+
+**Reading the rendered chart**: the six architectures agree unanimously on 52% of the test set, and there the majority vote is right 77% of the time. Agreement collapses quickly past that point — once predictions split into 2 distinct labels (37% of examples), majority-vote accuracy drops to ~48%, then flattens around 30–40% for 3+ distinct labels. The right panel explains why: the share of extreme ratings (1★ and 5★ — over half of the "all agree" group) shrinks steadily as disagreement grows, replaced by middle ratings (2★–4★), exactly the boundary cases where a human annotator would also hesitate between adjacent stars. At the extreme (5 distinct predictions, well under 1% of the test set — too few examples to read anything into the small accuracy uptick there), the composition is almost purely 2★/3★: a textbook "mildly negative or neutral?" ambiguity. This backs the **label-ambiguity** reading — a meaningful share of the remaining error sits in inherently fuzzy middle-rating reviews, a ceiling that no architecture change is likely to break — while the ~23% error rate that persists even where all six models agree points to a second, smaller pool of genuinely hard or mislabeled examples shared across architectures.
 
 ### Examples
 
@@ -1899,12 +1844,17 @@ HTML(html)
 
 ## Explainability
 
-This section compares how two architectures — **Label Attention** (best model) and its **mean-pooling counterpart** (same backbone, no label attention) — respond to the same test examples, using Captum Layer Integrated Gradients attributions produced by `benchmark/explain.py`.
+This section turns the spotlight on *why* the two architectures predict what they predict, not just *how often* they're right. Both models — **Label Attention** (one learned query vector per star rating, cross-attending over the sentence) and its **Mean Pooling** counterpart (same backbone architecture, but a single pooled sentence vector and an ordinary linear classification head) — are probed with an identical battery of analyses on the *same* 200 sampled test reviews (`benchmark/explain.py`, fixed seed), so every figure below is a direct, paired comparison rather than two separate reports glued together.
 
-Two complementary lenses are presented:
+Five complementary instruments are used throughout:
 
-- **Corpus-level word importance**: attributions aggregated over 200 test examples, surfacing the vocabulary each star rating relies on.
-- **Per-example token attribution**: for individual reviews, signed Captum scores show which words push each model toward or away from each class — side by side for direct comparison.
+- **Layer Integrated Gradients (Captum)** — a gradient-based, post-hoc attribution method that assigns every input word a *signed* score for every class: positive = pushes the prediction toward that star rating, negative = pushes away. It only needs a forward+backward pass through the model, so it can be computed identically for both architectures — which is exactly what makes the comparison fair.
+- **Label-attention weights** — for the Label Attention model only: the *raw cross-attention weights* between each class query and the sentence's tokens. An explanation that's *built into* the architecture, rather than reconstructed after the fact.
+- **Self-attention matrices** — both models are built on the same transformer backbone, so we can also peek at how the encoder itself distributes attention across the sentence, layer by layer, before any classification happens.
+- **Class direction vectors** — the per-class reference vectors the final classification step actually compares the sentence representation to: the label-attention queries (`label_embeds`) for one model, the rows of the linear classification head (`linear_weight`) for the other. Different mechanisms, same role — comparing their geometry tells us how each architecture *organises* the five star ratings internally.
+- **A faithfulness (word-deletion) stress test** — attribution scores are only useful if they reflect what the model *actually* relies on, so we test this directly: delete the highest-scoring words and watch the predicted probability collapse (or not).
+
+Throughout, **blue tones denote evidence *for* a class and red tones evidence *against* it**, and the same five-colour palette (dark blue → green → amber → purple → dark red) consistently encodes 1★ through 5★ in every figure that breaks results down by star rating. Each subsection below states the analysis' goal, shows the figure, and closes with concrete pointers on how to read it.
 
 ```{python}
 #| label: load-explain-artifacts
@@ -1918,278 +1868,780 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-EXPLAIN_RUN_LABATT  = "8286dc715ad54791bbb1407d840d528b"
-EXPLAIN_RUN_POOLING = "???"   # replace with pooling model run ID once available
+EXPLAIN_RUN_LABATT  = "8cb23a624c674c80a5f1fe0274706e8e"
+EXPLAIN_RUN_POOLING = "2e44179b11ef413eb144984c4e0d9b03"
 
-_CANDIDATE_NAMES = ["captum.npz", "captum_attn.npz"]   # try new name, fall back to old
+_ARTIFACT_NAMES = ["captum.npz", "label_attn.npz", "class_vectors.npz", "self_attn.npz", "faithfulness.npz"]
 
-def _load_captum(run_id: str):
-    """Download captum artifact for run_id; returns None if unavailable."""
+def _load_artifact(run_id: str, name: str):
+    """Download (and cache) one explainability artifact for run_id; None if unavailable."""
     if not run_id or run_id.startswith("?"):
         return None
     cache_dir = Path(f"benchmark/results/explain_{run_id[:8]}")
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # Return from cache — check all candidate filenames
-    for name in _CANDIDATE_NAMES:
-        cache = cache_dir / name
-        if cache.exists():
-            return np.load(cache, allow_pickle=True)
-    # Try downloading from MLflow
-    client = mlflow.MlflowClient()
-    for name in _CANDIDATE_NAMES:
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                local = client.download_artifacts(run_id, f"explainability/{name}", dst_path=tmp)
-                d     = np.load(local, allow_pickle=True)
-                cache = cache_dir / "captum.npz"
-                np.savez(str(cache), **{k: d[k] for k in d.files})
-                return np.load(cache, allow_pickle=True)
-        except Exception:
-            continue
-    return None
+    cache = cache_dir / name
+    if cache.exists():
+        return np.load(cache, allow_pickle=True)
+    try:
+        client = mlflow.MlflowClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            local = client.download_artifacts(run_id, f"explainability/{name}", dst_path=tmp)
+            d = np.load(local, allow_pickle=True)
+            np.savez(str(cache), **{k: d[k] for k in d.files})
+        return np.load(cache, allow_pickle=True)
+    except Exception:
+        return None
 
-cap_la = _load_captum(EXPLAIN_RUN_LABATT)
-cap_pl = _load_captum(EXPLAIN_RUN_POOLING)
+cap_la, lat_la, cv_la, sa_la, fai_la = (_load_artifact(EXPLAIN_RUN_LABATT,  n) for n in _ARTIFACT_NAMES)
+cap_pl, lat_pl, cv_pl, sa_pl, fai_pl = (_load_artifact(EXPLAIN_RUN_POOLING, n) for n in _ARTIFACT_NAMES)
 
-HAS_LA = cap_la is not None
-HAS_PL = cap_pl is not None
+HAS_LA   = cap_la is not None
+HAS_PL   = cap_pl is not None
 HAS_BOTH = HAS_LA and HAS_PL
 
 if not HAS_LA:
-    print("Label Attention artifacts not yet available — re-run benchmark/explain.py")
+    print("Explainability artifacts not yet available — re-run benchmark/explain.py")
 else:
     N_CLS   = cap_la["word_attn"][0].shape[0]
-    STARS   = [f"{i+1}★" for i in range(N_CLS)]
+    STARS   = [f"{i + 1}★" for i in range(N_CLS)]
     PALETTE = ["#1565C0", "#2E7D32", "#F57F17", "#6A1B9A", "#B71C1C"]
 
-    MODEL_DATA   = {"labatt": cap_la}
-    MODEL_LABELS = {"labatt": "Label Attention"}
-    if HAS_PL:
-        MODEL_DATA["pooling"]   = cap_pl
-        MODEL_LABELS["pooling"] = "Mean Pooling"
+    MODEL_LABELS = {"labatt": "Label Attention", "pooling": "Mean Pooling"}
+    CAPTUM       = {"labatt": cap_la, "pooling": cap_pl}
+    LABEL_ATTN   = {"labatt": lat_la, "pooling": lat_pl}
+    CLASS_VECS   = {"labatt": cv_la,  "pooling": cv_pl}
+    SELF_ATTN    = {"labatt": sa_la,  "pooling": sa_pl}
+    FAITHFUL     = {"labatt": fai_la, "pooling": fai_pl}
+    MODEL_KEYS   = [k for k in ("labatt", "pooling") if CAPTUM[k] is not None]
 
     def _class_sorted(cap, i: int) -> np.ndarray:
+        """Reorder word_attn[i]'s rows from confidence rank back to actual class index."""
         inv = np.argsort(cap["class_order"][i])
         return cap["word_attn"][i][inv]
 ```
 
-### Corpus-level word importance
+### Reading individual reviews: highlighted attributions
+
+Aggregate statistics are useful, but the fastest way to *trust* — or distrust — an explanation is to look at it on a real sentence. The figure below renders a handful of test reviews as **highlighted text**: each word's background is shaded in proportion to its Captum attribution score for the model's predicted class — **blue = pushes toward the predicted rating, red = pushes away from it**, with colour intensity proportional to `|score| / max|score|` within that review. Both architectures see the *same* review, so you can directly compare which words each one leans on.
+
+The selection below favours the most informative cases: reviews where the two architectures **disagree** on the predicted rating (the richest source of qualitative insight — *what* did one model see that the other didn't?), plus a couple where they **agree and are correct** (a sanity check on what a "good" explanation looks like).
+
+How to read it:
+
+- A trustworthy explanation should highlight **content words that plausibly carry sentiment or rating information** ("disappointing", "five stars", "broke after a week"…) rather than function words or punctuation.
+- When the two models **disagree**, compare which words light up: does one fixate on a single strong cue while the other balances several weaker ones? Does the wrong model anchor on a word that is misleading out of context (e.g. "**not** bad")?
+- Watch for **reversed polarity**: a word highlighted in red for the predicted class is acting as *counter-evidence* — e.g. a 5★ prediction where "but" or "however" is flagged red would reveal the model (correctly) discounting a caveat in an otherwise glowing review.
 
 ```{python}
-#| label: fig-captum-corpus
-#| fig-cap: "Top words per star rating (Captum IG, mean over 200 examples, min. 5 occurrences). Bars in class colour push toward the class; red bars push away."
+#| label: fig-explain-highlight
+#| fig-cap: "Highlighted-text view of Captum attributions for the predicted class. Blue = supports the prediction, red = opposes it; intensity ∝ |score| relative to the review's strongest word. Selection favours reviews where the two architectures disagree, plus a couple where they agree and are correct."
+
+import html as html_lib
+from IPython.display import HTML
+
+def _highlight_spans(words, scores, max_words: int = 40) -> str:
+    words  = list(words)[:max_words]
+    scores = np.asarray(scores[:len(words)], dtype=float)
+    amax   = float(np.abs(scores).max()) or 1.0
+    spans  = []
+    for w, s in zip(words, scores):
+        t   = abs(float(s)) / amax
+        rgb = "21,101,192" if s >= 0 else "239,83,80"
+        spans.append(
+            f'<span style="background-color: rgba({rgb}, {0.10 + 0.65 * t:.2f}); '
+            f'padding:1px 3px; margin:0 1px; border-radius:3px; line-height:2.3;">'
+            f'{html_lib.escape(str(w))}</span>'
+        )
+    return " ".join(spans)
+
+def _example_card(idx: int) -> str:
+    wds = list(cap_la["words"][idx])[:40]
+    yt  = int(cap_la["y_true"][idx])
+    rows = [
+        f'<div style="margin-bottom:4px; font-size:13px; color:#444;">'
+        f'<b>Review #{idx}</b> &mdash; true rating: '
+        f'<span style="color:{PALETTE[yt]}; font-weight:700;">{STARS[yt]}</span> &mdash; '
+        f'<i>&ldquo;{html_lib.escape(str(cap_la["texts"][idx])[:170])}&hellip;&rdquo;</i></div>'
+    ]
+    for key in MODEL_KEYS:
+        cap   = CAPTUM[key]
+        pred  = int(cap["y_pred"][idx])
+        mat   = _class_sorted(cap, idx)
+        badge = "✓ correct" if pred == yt else "✗ incorrect"
+        badge_color = "#2E7D32" if pred == yt else "#B71C1C"
+        rows.append(
+            '<div style="margin:4px 0 12px 0;">'
+            f'<span style="display:inline-block; min-width:230px; font-size:12.5px; color:#555;">'
+            f'<b>{MODEL_LABELS[key]}</b> → predicts '
+            f'<span style="color:{PALETTE[pred]}; font-weight:700;">{STARS[pred]}</span> '
+            f'<span style="color:{badge_color}; font-size:11px;">({badge})</span></span>'
+            f'{_highlight_spans(wds, mat[pred])}</div>'
+        )
+    return ('<div style="padding:12px 14px; border:1px solid #e2e2e2; border-radius:8px; '
+            'background:#fcfcfc; margin-bottom:12px;">' + "".join(rows) + "</div>")
+
+if not HAS_LA:
+    cards_html = "<p>Artifacts not yet available.</p>"
+else:
+    y_true_la = cap_la["y_true"].astype(int)
+    y_pred_la = cap_la["y_pred"].astype(int)
+    rng = np.random.default_rng(11)
+
+    picks: list = []
+    if HAS_BOTH:
+        y_pred_pl = cap_pl["y_pred"].astype(int)
+        disagree  = np.where(y_pred_la != y_pred_pl)[0]
+        rng.shuffle(disagree)
+        picks += disagree[:3].tolist()
+        agree_ok = np.where((y_pred_la == y_pred_pl) & (y_pred_la == y_true_la))[0]
+        rng.shuffle(agree_ok)
+        picks += [int(i) for i in agree_ok if i not in picks][:2]
+    else:
+        ok = np.where(y_pred_la == y_true_la)[0]
+        rng.shuffle(ok)
+        picks = ok[:5].tolist()
+
+    cards_html = "".join(_example_card(int(i)) for i in picks)
+
+HTML(cards_html)
+```
+
+### Corpus-level word importance: the vocabulary behind each star rating
+
+Zooming out from individual reviews: which words does each architecture rely on *in general* to recognise a 1★ vs. a 5★ review? For every one of the 200 sampled reviews, Captum produces a signed attribution for each word and each class; here we average these scores across all occurrences of each word — keeping only words seen at least 5 times, to avoid one-off noise — and display the twelve most positively-attributed words per star rating.
+
+How to read it:
+
+- **Bar colour** follows the star-rating palette when the word *supports* that class on average, and turns **red** when it actually *pushes away* from it on balance — a word can land in a class's top-12 by magnitude while still being slightly negative overall, which is rare but worth noticing.
+- **Bar length** is the *mean* signed IG score: larger magnitude means the word moves the prediction more, on average, whenever it appears.
+- Use the **Label Attention / Mean Pooling** toggle to compare the two vocabularies for the same class. Largely overlapping vocabularies would suggest both architectures latch onto the same surface cues; diverging vocabularies would suggest they solve the task differently even though Captum is computed identically for both.
+
+```{python}
+#| label: fig-explain-corpus
+#| fig-cap: "Top-12 most positively-attributed words per star rating (mean signed Captum IG score over 200 reviews, words seen ≥ 5 times). Bars in the class colour push toward that rating; red bars push away from it despite ranking among the strongest |scores|."
+
+TOP_K = 12
+
+def _corpus_acc(cap) -> list:
+    """For each class, map word (lower-cased) -> list of its signed IG scores across all reviews."""
+    acc = [defaultdict(list) for _ in range(N_CLS)]
+    for i, wds in enumerate(cap["words"]):
+        mat = _class_sorted(cap, i)
+        for c in range(N_CLS):
+            for j, w in enumerate(list(wds)):
+                if j < mat.shape[1]:
+                    acc[c][w.lower()].append(float(mat[c, j]))
+    return acc
+
+def _corpus_top(acc, c: int, k: int = TOP_K, min_count: int = 5):
+    means = {w: float(np.mean(v)) for w, v in acc[c].items() if len(v) >= min_count}
+    return sorted(means.items(), key=lambda x: -x[1])[:k]
 
 if not HAS_LA:
     print("Artifacts not yet available.")
 else:
-    def _corpus_acc(cap) -> list:
-        acc = [defaultdict(list) for _ in range(N_CLS)]
-        for i, wds in enumerate(cap["words"]):
-            mat = _class_sorted(cap, i)
-            for c in range(N_CLS):
-                for j, w in enumerate(list(wds)):
-                    if j < mat.shape[1]:
-                        acc[c][w.lower()].append(float(mat[c, j]))
-        return acc
-
-    TOP_K = 12
-
-    def _corpus_traces(acc: list) -> list:
-        traces = []
-        for c in range(N_CLS):
-            means = {w: float(np.mean(v)) for w, v in acc[c].items() if len(v) >= 5}
-            top   = sorted(means.items(), key=lambda x: -x[1])[:TOP_K]
-            ws    = [w for w, _ in top][::-1]
-            ss    = [float(s) for _, s in top][::-1]
-            traces.append(go.Bar(
-                x=ss, y=ws, orientation="h",
-                marker_color=[PALETTE[c] if s >= 0 else "#ef5350" for s in ss],
-                showlegend=False,
-                hovertemplate="%{y}: %{x:.4f}<extra></extra>",
-            ))
-        return traces
-
-    accs_per_model = {k: _corpus_acc(v) for k, v in MODEL_DATA.items()}
-    traces_per_model = {k: _corpus_traces(v) for k, v in accs_per_model.items()}
+    accs = {k: _corpus_acc(CAPTUM[k]) for k in MODEL_KEYS}
     n_tr = N_CLS
 
     fig_corp = make_subplots(rows=1, cols=N_CLS, subplot_titles=STARS, shared_yaxes=False)
+    for key in MODEL_KEYS:
+        for c in range(N_CLS):
+            top = _corpus_top(accs[key], c)[::-1]
+            ws  = [w for w, _ in top]
+            ss  = [s for _, s in top]
+            fig_corp.add_trace(go.Bar(
+                x=ss, y=ws, orientation="h",
+                marker_color=[PALETTE[c] if s >= 0 else "#ef5350" for s in ss],
+                showlegend=False, hovertemplate="%{y}: %{x:.4f}<extra></extra>",
+            ), row=1, col=c + 1)
+        fig_corp.update_xaxes(showgrid=True, gridcolor="#eee", zeroline=True,
+                              zerolinecolor="#bbb", title_text="Mean IG score", row=1, col=c + 1)
 
-    for model_key, traces in traces_per_model.items():
-        for c, tr in enumerate(traces):
-            fig_corp.add_trace(tr, row=1, col=c + 1)
-        fig_corp.update_xaxes(
-            showgrid=True, gridcolor="#eee",
-            zeroline=True, zerolinecolor="#bbb",
-            title_text="Mean IG score",
-            row=1, col=c + 1,
-        )
-
-    # Default: show only first model (labatt); hide others
-    n_models = len(traces_per_model)
     for i, tr in enumerate(fig_corp.data):
-        tr.visible = (i < n_tr)   # first n_tr traces = labatt
+        tr.visible = (i < n_tr)
 
     layout_extra = {}
     if HAS_BOTH:
-        vis_la = [True]  * n_tr + [False] * n_tr
-        vis_pl = [False] * n_tr + [True]  * n_tr
+        vis = {key: [j // n_tr == ki for j in range(n_tr * len(MODEL_KEYS))]
+               for ki, key in enumerate(MODEL_KEYS)}
         layout_extra = dict(
-            annotations=[dict(
-                text="<b>Model:</b>", x=0, xanchor="left", xref="paper",
-                y=1.18, yanchor="bottom", yref="paper",
-                showarrow=False, font=dict(size=12, color="#555"),
-            )],
+            annotations=[dict(text="<b>Model:</b>", x=0, xanchor="left", xref="paper",
+                              y=1.18, yanchor="bottom", yref="paper", showarrow=False,
+                              font=dict(size=12, color="#555"))],
             updatemenus=[dict(
                 type="buttons", direction="right",
-                buttons=[
-                    dict(label="Label Attention", method="restyle",
-                         args=[{"visible": vis_la}]),
-                    dict(label="Mean Pooling",    method="restyle",
-                         args=[{"visible": vis_pl}]),
-                ],
-                x=0.12, xanchor="left", y=1.15, yanchor="top",
-                showactive=True, bgcolor="#f0f0f0",
-                bordercolor="#ccc", borderwidth=1,
-                font=dict(size=12, color="#222"),
-                pad=dict(l=4, r=4, t=4, b=4),
+                buttons=[dict(label=MODEL_LABELS[key], method="restyle", args=[{"visible": vis[key]}])
+                         for key in MODEL_KEYS],
+                x=0.12, xanchor="left", y=1.15, yanchor="top", showactive=True,
+                bgcolor="#f0f0f0", bordercolor="#ccc", borderwidth=1,
+                font=dict(size=12, color="#222"), pad=dict(l=4, r=4, t=4, b=4),
             )],
         )
 
-    fig_corp.update_layout(
-        height=440, margin=dict(t=100 if HAS_BOTH else 50, b=20, l=10, r=10),
-        paper_bgcolor="white", plot_bgcolor="white",
-        **layout_extra,
-    )
+    fig_corp.update_layout(height=440, margin=dict(t=100 if HAS_BOTH else 50, b=20, l=10, r=10),
+                           paper_bgcolor="white", plot_bgcolor="white", **layout_extra)
     fig_corp.show()
 ```
 
-### Per-example token attribution
+### How focused are the explanations?
+
+A model can be "right for the right reasons" in (at least) two different styles: by **concentrating** its evidence on a handful of decisive words, or by **distributing** it thinly across the whole sentence. Neither is inherently better — but the two architectures might default to different styles, and that has practical consequences (concentrated explanations are easier for a human reviewer to audit at a glance).
+
+For each review, we take the predicted class's row of |Captum scores|, normalise it into a probability distribution over the sentence's words, and compute its **Shannon entropy**, itself normalised by `log(n_words)` so that sentences of different lengths remain comparable. The result lives in *[0, 1]*:
+
+- **Close to 0** → almost all the "credit" sits on one or two words — a peaked, easy-to-audit explanation.
+- **Close to 1** → the explanation spreads its weight near-uniformly across the sentence — every word "matters a little", which in practice often means *no* word clearly stands out.
 
 ```{python}
-#| label: fig-captum-example
-#| fig-cap: "Captum IG attributions for individual reviews. Each row = one star class. Blue = pushes toward the class; red = pushes away. Navigate with the numbered buttons."
+#| label: fig-explain-entropy
+#| fig-cap: "Distribution of the normalised entropy of |Captum IG| scores for the predicted class, one point per review (200 reviews). Lower = concentrated / peaked explanations; higher = diffuse explanations."
+
+def _focus_entropy(cap) -> np.ndarray:
+    vals = []
+    for i in range(len(cap["words"])):
+        nw = len(cap["words"][i])
+        if nw < 2:
+            continue
+        s = np.abs(cap["word_attn"][i][0][:nw])   # row 0 = top-1 predicted class (confidence order)
+        tot = s.sum()
+        if tot <= 0:
+            continue
+        p = s / tot
+        h = -np.sum(p * np.log(p + 1e-12))
+        vals.append(h / np.log(nw))
+    return np.array(vals)
 
 if not HAS_LA:
     print("Artifacts not yet available.")
 else:
-    MAX_WORDS = 30
-    N_EX_SHOW = 10
-    N_COLS    = 2 if HAS_BOTH else 1
-    col_titles = ["Label Attention", "Mean Pooling"] if HAS_BOTH else ["Label Attention"]
-
-    y_true_la = cap_la["y_true"].astype(int)
-    y_pred_la = cap_la["y_pred"].astype(int)
-    rng       = np.random.default_rng(42)
-
-    ex_indices: list = []
-    for c in range(N_CLS):
-        mask = np.where((y_true_la == c) & (y_pred_la == c))[0]
-        if len(mask):
-            ex_indices.append(int(rng.choice(mask)))
-    remaining = [i for i in np.where(y_pred_la == y_true_la)[0] if i not in ex_indices]
-    rng.shuffle(remaining)
-    ex_indices += list(remaining[: N_EX_SHOW - len(ex_indices)])
-    ex_indices  = ex_indices[:N_EX_SHOW]
-
-    def _ex_arrays(cap, i: int):
-        wds  = list(cap["words"][i])[:MAX_WORDS]
-        mat  = _class_sorted(cap, i)[:, :len(wds)]
-        amax = float(np.abs(mat).max()) or 1.0
-        return wds, mat, amax
-
-    payloads = []
-    for ei in ex_indices:
-        wds_la, mat_la, amax_la = _ex_arrays(cap_la, ei)
-        entry = {
-            "title": (
-                f"y_true={STARS[y_true_la[ei]]}  —  "
-                f"\"{str(cap_la['texts'][ei])[:100]}…\""
-            ),
-            "wds_la": wds_la, "mat_la": mat_la, "amax_la": amax_la,
-        }
-        if HAS_BOTH:
-            wds_pl, mat_pl, amax_pl = _ex_arrays(cap_pl, ei)
-            entry.update({"wds_pl": wds_pl, "mat_pl": mat_pl, "amax_pl": amax_pl})
-        payloads.append(entry)
-
-    fig = make_subplots(
-        rows=N_CLS, cols=N_COLS,
-        column_titles=col_titles,
-        vertical_spacing=0.05,
-        horizontal_spacing=0.06,
-    )
-
-    col_specs = [("wds_la", "mat_la", "amax_la")]
-    if HAS_BOTH:
-        col_specs.append(("wds_pl", "mat_pl", "amax_pl"))
-
-    init = payloads[0]
-    for c in range(N_CLS):
-        for col_idx, (wds_key, mat_key, amax_key) in enumerate(col_specs):
-            wds  = init[wds_key]
-            sc   = init[mat_key][c].tolist()
-            amax = init[amax_key]
-            fig.add_trace(
-                go.Bar(
-                    x=list(range(len(wds))), y=sc,
-                    marker=dict(
-                        color=sc, colorscale="RdBu", cmid=0,
-                        cmin=-amax, cmax=amax, showscale=False,
-                    ),
-                    text=wds, textposition="outside",
-                    hovertemplate="%{text}: %{y:.3f}<extra></extra>",
-                    showlegend=False,
-                ),
-                row=c + 1, col=col_idx + 1,
-            )
-            fig.update_xaxes(showticklabels=False, row=c + 1, col=col_idx + 1)
-            fig.update_yaxes(
-                zeroline=True, zerolinecolor="#bbb",
-                title_text=STARS[c] if col_idx == 0 else "",
-                row=c + 1, col=col_idx + 1,
-            )
-
-    n_traces = N_COLS * N_CLS
-    nav_buttons = []
-    for ei_idx, payload in enumerate(payloads):
-        new_x, new_y, new_text = [], [], []
-        for c in range(N_CLS):
-            for wds_key, mat_key, _amax_key in col_specs:
-                wds = payload[wds_key]
-                sc  = payload[mat_key][c].tolist()
-                new_x.append(list(range(len(wds))))
-                new_y.append(sc)
-                new_text.append(wds)
-        nav_buttons.append(dict(
-            label=str(ei_idx + 1),
-            method="update",
-            args=[
-                {"x": new_x, "y": new_y, "text": new_text},
-                {"title.text": payload["title"]},
-            ],
+    fig_ent = go.Figure()
+    for key in MODEL_KEYS:
+        vals  = _focus_entropy(CAPTUM[key])
+        color = PALETTE[0] if key == "labatt" else PALETTE[4]
+        fig_ent.add_trace(go.Violin(
+            y=vals, name=MODEL_LABELS[key], box_visible=True, meanline_visible=True,
+            line_color=color, fillcolor=color, opacity=0.55,
+            points="all", pointpos=0, jitter=0.35, marker=dict(size=3, opacity=0.35),
         ))
-
-    fig.update_layout(
-        height=150 * N_CLS,
-        title_text=init["title"],
-        title_font_size=11,
-        margin=dict(t=110, b=20, l=60, r=20),
-        paper_bgcolor="white", plot_bgcolor="white",
-        annotations=[dict(
-            text="<b>Example:</b>", x=0, xanchor="left", xref="paper",
-            y=1.09, yanchor="bottom", yref="paper",
-            showarrow=False, font=dict(size=12, color="#555"),
-        )],
-        updatemenus=[dict(
-            type="buttons", direction="right",
-            buttons=nav_buttons,
-            x=0.10, xanchor="left", y=1.06, yanchor="top",
-            showactive=True, bgcolor="#f0f0f0",
-            bordercolor="#ccc", borderwidth=1,
-            font=dict(size=12, color="#222"),
-            pad=dict(l=4, r=4, t=4, b=4),
-        )],
+    fig_ent.update_layout(
+        yaxis_title="Normalised entropy of |attribution|  (0 = peaked, 1 = diffuse)",
+        yaxis_range=[0, 1.02], paper_bgcolor="white", plot_bgcolor="white",
+        height=440, margin=dict(t=30, b=20, l=10, r=10), showlegend=False,
     )
-    fig.show()
+    fig_ent.show()
+```
+
+Compare the two violins' **medians** (the line inside each box) and **spread**: a model whose distribution sits systematically lower produces — on average — sparser, more "pointable-at" explanations. A wide or bimodal shape suggests the model switches between different explanation regimes (e.g. peaked on short reviews, diffuse on long ones) — worth cross-checking against sentence length if you observe it.
+
+### Are per-class explanations distinctive?
+
+A genuinely useful per-class explanation should look *different* depending on which class it explains — otherwise the model (or Captum) is essentially saying "this word is generically important", which is far less actionable than "this word specifically signals a 5★ review". Two complementary checks:
+
+**(a) Inter-class similarity of the corpus-level vocabulary.** Reusing the per-class mean attribution profiles from the previous figure (restricted to the shared vocabulary of words seen ≥ 5 times), we compute the 5×5 **Pearson correlation matrix** between classes' word-attribution profiles, separately for each model.
+
+How to read it: the diagonal is always 1 by construction. **Off-diagonal cells close to ±1** mean two classes "talk about" the same words with the same (or opposite) sign — e.g. a strong positive correlation between 4★ and 5★ would mean the model mostly tells them apart by *degree* rather than by *different vocabulary* (plausible — these ratings are semantically adjacent), while a strong correlation between 1★ and 5★ would be more surprising and worth a closer look (it could mean the explanations are not very class-specific after all).
+
+**(b) Top-1 vs. runner-up overlap, at the level of individual reviews.** For each review, we take the 5 most-attributed words for the model's *top-1* predicted class and for its *runner-up* class, and measure their **Jaccard overlap** (`|intersection| / |union|`, between 0 and 1).
+
+How to read it: a **low overlap** means the model points at largely different evidence to justify "this is a 4★" vs. "...but it could be a 3★" — a sign that its internal representation of each class is genuinely distinct. A **high overlap** means the same handful of words do double duty for both candidate ratings — still possibly correct, but a less informative explanation of *why this class over the other*.
+
+```{python}
+#| label: fig-explain-class-correlation
+#| fig-cap: "Pearson correlation between classes' corpus-level word-attribution profiles, per model. Values near +1: two ratings rely on a very similar (signed) vocabulary; near -1: mirror-image vocabularies; near 0: unrelated vocabularies."
+
+def _class_corpus_matrix(acc, min_count: int = 5) -> np.ndarray:
+    vocab = sorted({w for c in acc for w, v in c.items() if len(v) >= min_count})
+    mat = np.zeros((N_CLS, len(vocab)))
+    for c in range(N_CLS):
+        for j, w in enumerate(vocab):
+            v = acc[c].get(w)
+            if v and len(v) >= min_count:
+                mat[c, j] = float(np.mean(v))
+    return mat
+
+if not HAS_LA:
+    print("Artifacts not yet available.")
+else:
+    fig_corr = make_subplots(rows=1, cols=len(MODEL_KEYS),
+                             subplot_titles=[MODEL_LABELS[k] for k in MODEL_KEYS])
+    for ci, key in enumerate(MODEL_KEYS):
+        corr = np.corrcoef(_class_corpus_matrix(accs[key]))
+        fig_corr.add_trace(go.Heatmap(
+            z=corr, x=STARS, y=STARS, zmin=-1, zmax=1, colorscale="RdBu_r",
+            text=np.round(corr, 2), texttemplate="%{text}", textfont=dict(size=11),
+            showscale=(ci == len(MODEL_KEYS) - 1), colorbar=dict(title="r"),
+        ), row=1, col=ci + 1)
+    fig_corr.update_yaxes(autorange="reversed")
+    fig_corr.update_layout(height=380, margin=dict(t=60, b=10, l=10, r=10),
+                           paper_bgcolor="white", plot_bgcolor="white")
+    fig_corr.show()
+```
+
+```{python}
+#| label: fig-explain-top1-top2
+#| fig-cap: "Jaccard overlap between the top-5 most-attributed words for the predicted class and for the runner-up class, one point per review. Lower = the model points to different evidence for its two leading hypotheses (more class-specific reasoning)."
+
+def _top1_top2_overlap(cap, k: int = 5) -> np.ndarray:
+    vals = []
+    for i in range(len(cap["words"])):
+        mat = cap["word_attn"][i]
+        nw  = mat.shape[1]
+        if nw < 2:
+            continue
+        kk   = min(k, nw)
+        top1 = set(np.argsort(-np.abs(mat[0]))[:kk].tolist())
+        top2 = set(np.argsort(-np.abs(mat[1]))[:kk].tolist())
+        vals.append(len(top1 & top2) / len(top1 | top2))
+    return np.array(vals)
+
+if not HAS_LA:
+    print("Artifacts not yet available.")
+else:
+    fig_ov = go.Figure()
+    for key in MODEL_KEYS:
+        vals  = _top1_top2_overlap(CAPTUM[key])
+        color = PALETTE[0] if key == "labatt" else PALETTE[4]
+        fig_ov.add_trace(go.Violin(
+            y=vals, name=MODEL_LABELS[key], box_visible=True, meanline_visible=True,
+            line_color=color, fillcolor=color, opacity=0.55,
+            points="all", pointpos=0, jitter=0.35, marker=dict(size=3, opacity=0.35),
+        ))
+    fig_ov.update_layout(
+        yaxis_title="Jaccard overlap (top-1 vs. runner-up evidence)", yaxis_range=[-0.02, 1.02],
+        paper_bgcolor="white", plot_bgcolor="white", height=420,
+        margin=dict(t=30, b=20, l=10, r=10), showlegend=False,
+    )
+    fig_ov.show()
+```
+
+If Label Attention shows systematically lower top-1/runner-up overlap than Mean Pooling, that's a direct, mechanistic explanation for *why* it might separate adjacent ratings better: it wouldn't just be reaching the same verdict through a different path — it would be building a genuinely different, more class-specific case for each candidate rating.
+
+### Does a strong explanation mean a correct prediction?
+
+Do reviews where a model finds **strong, unambiguous evidence** for its prediction tend to be the ones it gets **right**? If so, the magnitude of the attributions becomes a usable, free **confidence proxy** — useful for triage (e.g. flagging low-evidence predictions for human review) independently of the model's own, often poorly-calibrated, softmax confidence.
+
+For every review we compute the **mean |Captum score|** across the sentence's words, restricted to the row corresponding to the model's top-1 prediction — call it the review's *evidence strength* — and split the resulting distribution by whether that prediction was **correct** or **incorrect**.
+
+How to read it: if the "Correct" box sits clearly **above** the "Incorrect" box, evidence strength is informative — wrong predictions tend to be "half-hearted" (the model can't really point at anything convincing), and a low-evidence prediction is a flag worth a second look. If the two boxes overlap heavily, the model can be "confidently wrong" just as often as "confidently right", and evidence strength alone won't help triage its errors.
+
+```{python}
+#| label: fig-explain-strength-correctness
+#| fig-cap: "Mean |Captum IG| score for the predicted class, split by whether the prediction was correct. Higher = the model points at stronger evidence for its top choice."
+
+def _evidence_strength(cap):
+    y_pred   = cap["y_pred"].astype(int)
+    y_true   = cap["y_true"].astype(int)
+    strength = np.array([float(np.abs(cap["word_attn"][i][0]).mean()) for i in range(len(cap["words"]))])
+    return strength, (y_pred == y_true)
+
+if not HAS_LA:
+    print("Artifacts not yet available.")
+else:
+    fig_ec = make_subplots(rows=1, cols=len(MODEL_KEYS),
+                           subplot_titles=[MODEL_LABELS[k] for k in MODEL_KEYS], shared_yaxes=True)
+    for ci, key in enumerate(MODEL_KEYS):
+        strength, correct = _evidence_strength(CAPTUM[key])
+        for grp, name, color in [(correct, "Correct", "#2E7D32"), (~correct, "Incorrect", "#B71C1C")]:
+            fig_ec.add_trace(go.Box(
+                y=strength[grp], name=name, marker_color=color, boxmean=True,
+                showlegend=(ci == 0), legendgroup=name,
+            ), row=1, col=ci + 1)
+    fig_ec.update_yaxes(title_text="Mean |attribution| for the predicted class", row=1, col=1)
+    fig_ec.update_layout(boxmode="group", paper_bgcolor="white", plot_bgcolor="white",
+                         height=440, margin=dict(t=60, b=20, l=10, r=10))
+    fig_ec.show()
+```
+
+A useful follow-up question, if you have the appetite for it: does the *gap* between the two boxes differ between the architectures? A bigger gap means evidence strength is a *better* confidence proxy for that model — a small, practical advantage that wouldn't show up in plain accuracy numbers.
+
+### Where does the evidence sit in the sentence?
+
+Lightweight encoders are sometimes accused of taking shortcuts based on *position* rather than *content* — e.g. always weighting the first or last few words heavily, regardless of what they say (a well-documented artefact in several text-classification benchmarks). To check for this, we take, for every review, the **3 most-attributed words** for the predicted class and record their **relative position** in the sentence (0 = first word, 1 = last word), then look at the resulting distribution.
+
+How to read it: a **flat** distribution means evidence is found uniformly throughout the sentence — no positional shortcut. **Spikes near 0 and/or 1** indicate the model leans on the beginning and/or end of the review — which can be a perfectly legitimate stylistic regularity (people often state their verdict up front, or wrap up with it: "Overall, I'd give this 2 stars") but can *also* be a shortcut that would fail on differently-structured text. Comparing the shape between the two models tells you whether such a tendency, if present, comes from the shared transformer backbone or is amplified/dampened by the aggregation strategy on top of it.
+
+```{python}
+#| label: fig-explain-position
+#| fig-cap: "Relative position (0 = first word, 1 = last word) of the 3 most-attributed words for the predicted class, pooled over 200 reviews. A flat profile means no positional bias; peaks near the edges mean the model leans on the beginning/end of the sentence."
+
+def _evidence_positions(cap, k: int = 3) -> np.ndarray:
+    pos = []
+    for i in range(len(cap["words"])):
+        nw = len(cap["words"][i])
+        if nw < 2:
+            continue
+        kk  = min(k, nw)
+        top = np.argsort(-np.abs(cap["word_attn"][i][0][:nw]))[:kk]
+        pos.extend((top / (nw - 1)).tolist())
+    return np.array(pos)
+
+if not HAS_LA:
+    print("Artifacts not yet available.")
+else:
+    fig_pos = go.Figure()
+    for key in MODEL_KEYS:
+        color = PALETTE[0] if key == "labatt" else PALETTE[4]
+        fig_pos.add_trace(go.Histogram(
+            x=_evidence_positions(CAPTUM[key]), nbinsx=20, histnorm="probability density",
+            opacity=0.55, name=MODEL_LABELS[key], marker_color=color,
+        ))
+    fig_pos.update_layout(
+        barmode="overlay", xaxis_title="Relative position in the sentence (0 = start, 1 = end)",
+        yaxis_title="Density", paper_bgcolor="white", plot_bgcolor="white",
+        height=420, margin=dict(t=30, b=20, l=10, r=10),
+        legend=dict(x=0.5, y=1.1, orientation="h", xanchor="center"),
+    )
+    fig_pos.show()
+```
+
+### Self-attention: how the transformer reads the sentence, layer by layer
+
+Both architectures are built on the **same transformer backbone** — they only differ in how its token-level outputs get turned into a single classification decision. So before looking at how each model aggregates information, it's worth checking whether they end up encoding the sentence **the same way internally**: we extract the head-averaged self-attention matrices from every layer, for the very same sample of reviews, for both models.
+
+**Reading an attention heatmap**: each cell `(i, j)` shows how much token `i` attends to token `j` when building its contextual representation (rows sum to 1). A **strong diagonal** means tokens mostly look at themselves and their immediate neighbours (local, syntax-like processing); **vertical stripes** — a column lighting up across many rows — mean many tokens converge onto a few "hub" tokens, often punctuation or the very first token, a well-documented **attention-sink** phenomenon; a **diffuse, low-contrast** matrix means attention is spread thinly across the whole sentence (more global, semantic mixing).
+
+```{python}
+#| label: fig-explain-selfattn-example
+#| fig-cap: "Self-attention matrices (averaged over heads) for the same review, layer by layer, for both models. Row = query token, column = key token; brighter = more attention weight."
+
+HAS_SA = HAS_LA and all(SELF_ATTN.get(k) is not None for k in MODEL_KEYS)
+
+if not HAS_SA:
+    print("Self-attention artifacts not yet available.")
+else:
+    n_align  = min(len(SELF_ATTN[k]["texts"]) for k in MODEL_KEYS)
+    lengths  = [SELF_ATTN[MODEL_KEYS[0]]["self_attn"][i].shape[-1] for i in range(n_align)]
+    decent   = [i for i, L in enumerate(lengths) if 25 <= L <= 55]
+    ex_idx   = decent[0] if decent else int(np.argmax(lengths))
+    n_layers = SELF_ATTN[MODEL_KEYS[0]]["self_attn"][ex_idx].shape[0]
+
+    fig_sa = make_subplots(
+        rows=len(MODEL_KEYS), cols=n_layers,
+        row_titles=[MODEL_LABELS[k] for k in MODEL_KEYS],
+        column_titles=[f"Layer {l + 1}" for l in range(n_layers)],
+        horizontal_spacing=0.05, vertical_spacing=0.10,
+    )
+    for ri, key in enumerate(MODEL_KEYS):
+        m = SELF_ATTN[key]["self_attn"][ex_idx]
+        for l in range(n_layers):
+            fig_sa.add_trace(go.Heatmap(
+                z=m[l], colorscale="Viridis", zmin=0, showscale=(ri == 0 and l == n_layers - 1),
+                colorbar=dict(title="weight", len=0.5),
+            ), row=ri + 1, col=l + 1)
+    fig_sa.update_xaxes(showticklabels=False)
+    fig_sa.update_yaxes(showticklabels=False, autorange="reversed")
+    fig_sa.update_layout(
+        height=320 * len(MODEL_KEYS), paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(t=70, b=10, l=10, r=10), title_font_size=12,
+        title_text=f"Review #{ex_idx} — “{str(SELF_ATTN[MODEL_KEYS[0]]['texts'][ex_idx])[:90]}…”",
+    )
+    fig_sa.show()
+```
+
+A single example is illustrative but anecdotal — to see whether a pattern holds *systematically*, we compute, for every sampled review and every layer, the row-wise entropy of the attention distribution (averaged over query tokens, normalised by `log(sequence length)`), and compare its distribution across layers and models.
+
+```{python}
+#| label: fig-explain-selfattn-entropy
+#| fig-cap: "Per-layer entropy of the self-attention distribution (averaged over query tokens, normalised by log(sequence length)), one point per review. Lower = attention concentrates on a few tokens; higher = attention spreads across the sentence."
+
+def _attn_entropy_by_layer(sa) -> list:
+    n        = len(sa["texts"])
+    mats     = sa["self_attn"][:n]
+    n_layers = mats[0].shape[0]
+    out      = [[] for _ in range(n_layers)]
+    for m in mats:
+        L = m.shape[-1]
+        if L < 2:
+            continue
+        for l in range(n_layers):
+            row_h = -np.sum(m[l] * np.log(m[l] + 1e-12), axis=-1)
+            out[l].append(float(row_h.mean()) / np.log(L))
+    return [np.array(o) for o in out]
+
+if not HAS_SA:
+    print("Self-attention artifacts not yet available.")
+else:
+    fig_sae = go.Figure()
+    for key in MODEL_KEYS:
+        color = PALETTE[0] if key == "labatt" else PALETTE[4]
+        for l, vals in enumerate(_attn_entropy_by_layer(SELF_ATTN[key])):
+            fig_sae.add_trace(go.Box(
+                x=[f"Layer {l + 1}"] * len(vals), y=vals, name=MODEL_LABELS[key],
+                marker_color=color, legendgroup=key, offsetgroup=key, showlegend=(l == 0),
+            ))
+    fig_sae.update_layout(
+        boxmode="group", yaxis_title="Normalised attention entropy", yaxis_range=[0, 1.02],
+        paper_bgcolor="white", plot_bgcolor="white", height=420,
+        margin=dict(t=30, b=20, l=10, r=10),
+    )
+    fig_sae.show()
+```
+
+Because both models start from the same backbone *architecture* (depth, width, attention configuration — see the `explain.py` docstring), any systematic difference you see here is attributable to how each was fine-tuned for its own aggregation strategy, not to differences in encoder capacity. A close match between the two would actually be reassuring: it would mean the comparison genuinely isolates the effect of "label attention vs. mean pooling", rather than being confounded by the two encoders having drifted into reading sentences differently.
+
+### Class representations: label queries vs. linear-head directions
+
+At the very last step, both architectures reduce a review to a decision by comparing some representation of the sentence against **one reference vector per star rating**:
+
+- Label Attention learns five **query embeddings** (`label_embeds`, one per class) that directly drive the cross-attention — they *are* the model's notion of "what a 1★ review looks like", "what a 5★ review looks like", and so on.
+- Mean Pooling instead learns a plain **linear classification head**; each of its five weight rows (`linear_weight`) plays the same role — the direction in embedding space onto which the pooled sentence vector is projected for that class.
+
+Despite coming from entirely different mechanisms, both sets of vectors answer the same question — "how does this architecture represent the five star ratings internally?" — so comparing their **geometry** is a fair, mechanism-agnostic probe.
+
+**(a) Cosine similarity matrix** — how aligned are the five class vectors with one another, within each model? **Absolute cosine values are not comparable across the two models** (the two embedding spaces are unrelated and have different dimensionalities of meaning) — what matters is the *pattern*: are adjacent ratings (1★–2★, 4★–5★) closer to each other than distant ones (1★–5★)? A model whose class vectors trace out the **ordinal structure of star ratings** has, in some sense, "discovered" that this is a regression-like problem dressed up as classification.
+
+**(b) 2D PCA projection** — a visual complement to (a): we project the five 256-dimensional vectors onto their first two principal components and connect them in rating order (1★→2★→…→5★). Again, **only the shape matters, not the absolute coordinates**: a smooth arc or line suggests an ordinal layout; a tight, undifferentiated cluster suggests the model leans more on *magnitude* (how far the sentence representation sits from a boundary) than on *direction* to separate ratings; an erratic zig-zag would be the most surprising — and most interesting — finding of all.
+
+```{python}
+#| label: fig-explain-class-vectors
+#| fig-cap: "Class direction vectors compared across architectures. Top row: cosine similarity between the five per-class vectors (only the pattern is comparable across models, not the absolute values). Bottom row: their 2D PCA projection, connected in rating order 1★→5★ — a smooth arc indicates an ordinal internal layout."
+
+def _cosine_sim(vecs: np.ndarray) -> np.ndarray:
+    n = vecs / (np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-12)
+    return n @ n.T
+
+def _pca_2d(vecs: np.ndarray) -> np.ndarray:
+    centered = vecs - vecs.mean(axis=0, keepdims=True)
+    _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+    return centered @ Vt[:2].T
+
+HAS_CV = HAS_LA and all(CLASS_VECS.get(k) is not None for k in MODEL_KEYS)
+
+if not HAS_CV:
+    print("Class-vector artifacts not yet available.")
+else:
+    titles = [f"{MODEL_LABELS[k]}<br><sub>({str(CLASS_VECS[k]['kind'])})</sub>" for k in MODEL_KEYS]
+    fig_cv = make_subplots(
+        rows=2, cols=len(MODEL_KEYS), subplot_titles=titles + [""] * len(MODEL_KEYS),
+        vertical_spacing=0.16, row_heights=[0.45, 0.55],
+    )
+    for ci, key in enumerate(MODEL_KEYS):
+        vecs = CLASS_VECS[key]["class_vectors"]
+
+        sim = _cosine_sim(vecs)
+        fig_cv.add_trace(go.Heatmap(
+            z=sim, x=STARS, y=STARS, zmin=-1, zmax=1, colorscale="RdBu_r",
+            text=np.round(sim, 2), texttemplate="%{text}", textfont=dict(size=10),
+            showscale=(ci == len(MODEL_KEYS) - 1), colorbar=dict(title="cos", len=0.4, y=0.8),
+        ), row=1, col=ci + 1)
+
+        xy = _pca_2d(vecs)
+        fig_cv.add_trace(go.Scatter(
+            x=xy[:, 0], y=xy[:, 1], mode="markers+lines+text",
+            text=STARS, textposition="top center", textfont=dict(size=11),
+            marker=dict(size=13, color=PALETTE, line=dict(color="white", width=1)),
+            line=dict(color="#bbb", dash="dot"), showlegend=False,
+        ), row=2, col=ci + 1)
+
+    fig_cv.update_yaxes(autorange="reversed", row=1)
+    fig_cv.update_xaxes(title_text="PC1", row=2)
+    fig_cv.update_yaxes(title_text="PC2", col=1, row=2)
+    fig_cv.update_layout(height=720, paper_bgcolor="white", plot_bgcolor="white",
+                         margin=dict(t=70, b=20, l=10, r=10))
+    fig_cv.show()
+```
+
+### Inside label attention: does the mechanism agree with post-hoc explanations?
+
+Label Attention is special: it doesn't *need* a post-hoc method like Captum to explain itself — its cross-attention weights (one query per class, attending over the sentence) are *already* a built-in, "by design" account of which words drove each class's score. This raises a natural question: does this **architectural** explanation agree with the **gradient-based** one? If it does, that's reassuring triangulation — two very different ways of probing the model converging on the same answer. If it doesn't, at least one of the two views is misleading, and it's worth knowing which.
+
+(Mean Pooling has no such mechanism — by construction, this analysis only concerns the Label Attention model.)
+
+**(a) Agreement with Captum.** For each review and each class, we compute the **Pearson correlation** between the (softmax-normalised) label-attention weights and the |Captum scores|, both at the word level. Values close to **+1** mean the two methods broadly agree on which words matter for that class; values near **0** mean they're unrelated; negative values (rare, but possible) would mean they actively disagree.
+
+**(b) Head specialisation.** The label-attention module uses several heads per class. Are they redundant copies of each other, or does each develop its own point of view? For each head we compute how much its attention pattern *changes* depending on which class it serves: `1 − mean pairwise cosine similarity` between the head's five class-conditioned attention vectors. A score near **0** means the head looks at the same words regardless of the target class (a generic, class-agnostic feature detector); a score near **1** means the head reorganises its focus dramatically from one class to the next (a class-specialised head).
+
+```{python}
+#| label: fig-explain-labatt-agreement
+#| fig-cap: "Per-(review, class) Pearson correlation between Label Attention's own softmax weights and |Captum IG| scores, at the word level. Mass concentrated toward +1 means the architecture's built-in explanation agrees with the post-hoc gradient-based one."
+
+HAS_LAT = HAS_LA and lat_la is not None
+
+if not HAS_LAT:
+    print("Label-attention artifacts not yet available (Mean Pooling has no label-attention mechanism).")
+else:
+    def _labatt_captum_agreement() -> np.ndarray:
+        n = min(len(cap_la["words"]), len(lat_la["words"]))
+        rhos = []
+        for i in range(n):
+            cap_mat = _class_sorted(cap_la, i)
+            lat_mat = lat_la["word_attn"][i]
+            nw = min(cap_mat.shape[1], lat_mat.shape[1])
+            if nw < 3:
+                continue
+            for c in range(N_CLS):
+                a = np.abs(cap_mat[c, :nw])
+                b = lat_mat[c, :nw]
+                if a.std() > 1e-9 and b.std() > 1e-9:
+                    rhos.append(float(np.corrcoef(a, b)[0, 1]))
+        return np.array(rhos)
+
+    rhos = _labatt_captum_agreement()
+    fig_agree = go.Figure(go.Histogram(x=rhos, nbinsx=30, marker_color=PALETTE[0], opacity=0.85))
+    fig_agree.add_vline(x=float(np.median(rhos)), line_dash="dash", line_color="#B71C1C",
+                        annotation_text=f"median = {np.median(rhos):.2f}", annotation_position="top right")
+    fig_agree.update_layout(
+        xaxis_title="Pearson correlation (label-attention weights vs. |Captum IG|)",
+        yaxis_title="Count over (review × class) pairs",
+        paper_bgcolor="white", plot_bgcolor="white", height=420,
+        margin=dict(t=30, b=20, l=10, r=10),
+    )
+    fig_agree.show()
+```
+
+```{python}
+#| label: fig-explain-labatt-heads
+#| fig-cap: "Head specialisation in the Label Attention module: for each head, 1 − mean pairwise cosine similarity between its five class-conditioned (token-level) attention vectors, averaged over reviews (error bars = ±1 std). Higher = the head reshapes its focus more from one star rating to the next."
+
+if not HAS_LAT:
+    print("Label-attention artifacts not yet available.")
+else:
+    def _head_specialisation(lat) -> np.ndarray:
+        n       = len(lat["head_attn"])
+        n_heads = lat["head_attn"][0].shape[0]
+        iu      = np.triu_indices(N_CLS, k=1)
+        spec    = np.zeros((n, n_heads))
+        for i in range(n):
+            a  = lat["head_attn"][i]                                  # (n_heads, n_classes, seq_len)
+            an = a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
+            for h in range(n_heads):
+                sim = an[h] @ an[h].T
+                spec[i, h] = 1.0 - sim[iu].mean()
+        return spec
+
+    spec    = _head_specialisation(lat_la)
+    n_heads = spec.shape[1]
+    fig_heads = go.Figure(go.Bar(
+        x=[f"Head {h + 1}" for h in range(n_heads)],
+        y=spec.mean(axis=0),
+        error_y=dict(type="data", array=spec.std(axis=0), visible=True),
+        marker_color=[PALETTE[h % len(PALETTE)] for h in range(n_heads)],
+    ))
+    fig_heads.update_layout(
+        yaxis_title="Class-specialisation score  (0 = generic head, 1 = fully class-specific)",
+        yaxis_range=[0, 1.0], paper_bgcolor="white", plot_bgcolor="white",
+        height=400, margin=dict(t=30, b=20, l=10, r=10),
+    )
+    fig_heads.show()
+```
+
+Together, these two views tell a coherent story about *how much you can trust the architecture's self-reported reasoning*: strong agreement with Captum (a) combined with clearly differentiated heads (b) would mean the label-attention weights are a faithful, fine-grained, "for free" explanation — arguably Label Attention's strongest practical advantage over Mean Pooling, which offers no such built-in introspection.
+
+### Are these explanations faithful? A word-deletion stress test
+
+All the analyses so far take attribution scores at face value — but a high attribution score is only meaningful if the model would *actually* change its mind were that word removed. This is the **faithfulness** question, and the standard way to test it — the "comprehensiveness" test from the ERASER benchmark — is refreshingly direct: progressively delete the words Captum ranked as most important for the predicted class, and watch how fast that class's predicted probability collapses. As a control, we also delete the *same number* of **randomly chosen** words, averaged over 3 draws — isolating the effect of *which* words are removed from the trivial effect of mutilating the sentence at all.
+
+How to read it:
+
+- The **solid lines** (guided removal) should drop *faster* than the **dotted lines** (random removal) of the same colour — the larger that gap, the more the explanation reflects words the model genuinely depends on, rather than scores that merely *correlate* with importance without *causing* it.
+- If a model's guided and random curves are nearly **superimposed**, its Captum attributions are not very faithful: deleting the words it called "important" hurts the prediction no more than deleting random ones — the explanation is, in a meaningful sense, decorative.
+- Comparing the **gap** between the two curves across architectures tells you which one's attributions are more trustworthy *as a debugging/auditing tool* — a property that matters in production independently of raw accuracy.
+
+```{python}
+#| label: fig-explain-faithfulness
+#| fig-cap: "Faithfulness (comprehensiveness) test: mean probability retained by the originally-predicted class as the most-attributed words are progressively deleted (solid = guided removal by |Captum score|; dotted = random-removal control, averaged over 3 draws). Shaded bands show ±1 std across 50 reviews."
+
+HAS_FAI = HAS_LA and all(FAITHFUL.get(k) is not None for k in MODEL_KEYS)
+
+if not HAS_FAI:
+    print("Faithfulness artifacts not yet available.")
+else:
+    fig_fai = go.Figure()
+    for key in MODEL_KEYS:
+        fai   = FAITHFUL[key]
+        fr    = fai["fractions"]
+        color = PALETTE[0] if key == "labatt" else PALETTE[4]
+        rgb   = "21,101,192" if key == "labatt" else "183,28,28"
+        for arr, name, dash in [(fai["guided_probs"], "guided removal", "solid"),
+                                (fai["random_probs"], "random removal (control)", "dot")]:
+            m, s = arr.mean(axis=0), arr.std(axis=0)
+            fig_fai.add_trace(go.Scatter(
+                x=np.concatenate([fr, fr[::-1]]), y=np.concatenate([m + s, (m - s)[::-1]]),
+                fill="toself", fillcolor=f"rgba({rgb},0.10)", line=dict(width=0),
+                showlegend=False, hoverinfo="skip",
+            ))
+            fig_fai.add_trace(go.Scatter(
+                x=fr, y=m, mode="lines+markers", name=f"{MODEL_LABELS[key]} — {name}",
+                line=dict(color=color, dash=dash, width=2.5), marker=dict(size=6),
+            ))
+    fig_fai.update_layout(
+        xaxis_title="Fraction of words removed", yaxis_title="Mean retained probability of the predicted class",
+        yaxis_range=[0, 1.02], paper_bgcolor="white", plot_bgcolor="white",
+        height=460, margin=dict(t=30, b=20, l=10, r=10),
+        legend=dict(x=1.02, y=1, xanchor="left"),
+    )
+    fig_fai.show()
+
+    print("Faithfulness gap — area between the random and guided curves (higher = more faithful):\n")
+    for key in MODEL_KEYS:
+        fai = FAITHFUL[key]
+        gap = float(np.trapezoid(fai["random_probs"].mean(0) - fai["guided_probs"].mean(0), fai["fractions"]))
+        print(f"  {MODEL_LABELS[key]:<16} {gap:+.4f}")
+```
+
+### Hunting for shortcuts: do trivial tokens dominate the vocabulary?
+
+A model can reach good accuracy for the wrong reasons — by latching onto **superficial correlations** in the training data (a punctuation mark, a brand name, a digit that happens to co-occur with certain ratings) rather than genuine sentiment signal. Untangling "real" sentiment vocabulary from such **shortcuts** is exactly what corpus-level attributions are useful for: we revisit the top-15 most-attributed words per class (computed earlier) and tag each one as a **content word**, a **stopword** (function words such as "the", "and", "very" — via scikit-learn's English stopword list), or **punctuation / a number**.
+
+How to read it: a healthy model should lean overwhelmingly on **content words** that a human would recognise as sentiment-bearing. A non-trivial share of stopwords or punctuation in the top ranks is not necessarily wrong — "!", "not", or "very" can be genuine amplifiers or negators of sentiment — but it *is* worth a manual look: is the model picking up on "!!!" because excited reviewers genuinely tend to leave more extreme ratings, or because of some quirk in how this particular dataset was scraped and labelled? The first is a real, if shallow, signal; the second is a shortcut that won't generalise.
+
+```{python}
+#| label: fig-explain-shortcuts
+#| fig-cap: "Composition of the top-15 most-attributed words per star rating (5 classes × 15 ranks = 75 slots per model), broken down into content words, stopwords, and punctuation/numbers."
+
+import re
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+
+_NON_ALPHA_RE = re.compile(r"^[^a-zA-Z]+$")
+
+def _word_kind(w: str) -> str:
+    wl = w.lower().strip()
+    if wl == "" or _NON_ALPHA_RE.match(wl):
+        return "punctuation / number"
+    if wl in ENGLISH_STOP_WORDS:
+        return "stopword"
+    return "content word"
+
+if not HAS_LA:
+    print("Artifacts not yet available.")
+else:
+    KINDS       = ["content word", "stopword", "punctuation / number"]
+    KIND_COLORS = {"content word": "#2E7D32", "stopword": "#F57F17", "punctuation / number": "#B71C1C"}
+
+    breakdown, flagged = {}, {}
+    for key in MODEL_KEYS:
+        counts = {k: 0 for k in KINDS}
+        flags  = []
+        for c in range(N_CLS):
+            for w, s in _corpus_top(accs[key], c, k=15):
+                kind = _word_kind(w)
+                counts[kind] += 1
+                if kind != "content word":
+                    flags.append((STARS[c], w, s, kind))
+        breakdown[key] = counts
+        flagged[key]   = flags
+
+    fig_sc = go.Figure()
+    for kind in KINDS:
+        fig_sc.add_trace(go.Bar(
+            x=[MODEL_LABELS[k] for k in MODEL_KEYS],
+            y=[breakdown[k][kind] for k in MODEL_KEYS],
+            name=kind, marker_color=KIND_COLORS[kind],
+        ))
+    fig_sc.update_layout(
+        barmode="stack", yaxis_title="# of (class, rank) slots in the top-15  (max 75)",
+        paper_bgcolor="white", plot_bgcolor="white", height=420,
+        margin=dict(t=30, b=20, l=10, r=10),
+        legend=dict(x=0.5, y=1.12, orientation="h", xanchor="center"),
+    )
+    fig_sc.show()
+
+    print("\nNon-content words appearing in a top-15 list (candidates worth a manual look):\n")
+    for key in MODEL_KEYS:
+        print(f"{MODEL_LABELS[key]}:")
+        if not flagged[key]:
+            print("  (none — every top-15 slot is a content word)")
+        for star, w, s, kind in flagged[key]:
+            print(f"  {star}  {w!r:<18} mean IG = {s:+.4f}   [{kind}]")
+        print()
 ```

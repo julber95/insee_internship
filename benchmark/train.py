@@ -277,7 +277,7 @@ def main(cfg: DictConfig):
                 batch = X[i:i + predict_batch_size]
                 result = clf.predict(batch, raw_categorical_inputs=value_encoder is not None)
                 pred = result["prediction"]
-                pred = pred.squeeze(dim=-1).numpy() if isinstance(pred, torch.Tensor) else np.array(pred).squeeze(axis=-1)
+                pred = pred.squeeze(dim=-1).cpu().numpy() if isinstance(pred, torch.Tensor) else np.array(pred).squeeze(axis=-1)
                 all_preds.append(pred)
             return np.concatenate(all_preds)
 
