@@ -38,4 +38,4 @@ index.html
 schemas/
 
 # Predictions
-/benchmark/results/*npz
+/benchmark/results/preds/*npz
